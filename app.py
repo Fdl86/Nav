@@ -38,11 +38,7 @@ def calculate_destination(lat, lon, bearing, dist_nm):
     lat1, lon1 = math.radians(lat), math.radians(lon)
     lat2 = lat1 + (dist_nm/R) * math.cos(brng)
     dlat = lat2 - lat1
-    if abs(dlat) < 1e-10:
-        q = math.cos(lat1)
-    else:
-        dphi = math.log(math.tan(lat2/2 + math.pi/4)/math.tan(lat1/2 + math.pi/4))
-        q = dlat / dphi
+    q = math.cos(lat1) if abs(dlat) < 1e-10 else dlat / math.log(math.tan(lat2/2 + math.pi/4)/math.tan(lat1/2 + math.pi/4))
     lon2 = lon1 + (dist_nm/R) * math.sin(brng) / q
     return math.degrees(lat2), math.degrees(lon2)
 
@@ -50,8 +46,8 @@ def create_pdf(df, total_info):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Helvetica", 'B', 16)
-    pdf.cell(0, 10, "LOG DE NAVIGATION AROME", align='C', ln=True)
-    pdf.ln(5)
+    pdf.cell(0, 10, "LOG DE NAVIGATION AROME", align='C')
+    pdf.ln(15)
     pdf.set_font("Helvetica", size=10)
     cols = ["Branche", "Rv", "Vent", "Cm", "GS", "EET"]
     for col in cols: pdf.cell(31, 10, col, border=1, align='C')
@@ -72,7 +68,6 @@ st.set_page_config(page_title="SkyAssistant", layout="wide")
 
 if 'waypoints' not in st.session_state: st.session_state.waypoints = []
 if 'results' not in st.session_state: st.session_state.results = None
-if 'total_info' not in st.session_state: st.session_state.total_info = ""
 
 with st.sidebar:
     st.title("🛠️ Paramètres")
@@ -107,7 +102,9 @@ with col_map:
         m = folium.Map(location=[st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"]], zoom_start=8)
         folium.PolyLine([[w["lat"], w["lon"]] for w in st.session_state.waypoints], color="red").add_to(m)
         for w in st.session_state.waypoints: folium.Marker([w["lat"], w["lon"]], tooltip=w['name']).add_to(m)
-        st_folium(m, width="100%", height=350, key="v5_map", returning_objects=[])
+        
+        # --- MODIFICATION ICI : Appel simplifié sans le paramètre qui crash ---
+        st_folium(m, width="100%", height=350, key="v6_map")
     else:
         st.info("Entrez un code OACI à gauche.")
 
@@ -117,7 +114,7 @@ if len(st.session_state.waypoints) > 1:
     st.area_chart(pd.DataFrame(prof).set_index("Point"), color=["#8B4513", "#0000FF"])
 
 if st.button("🚀 CALCULER", type="primary") and len(st.session_state.waypoints) > 1:
-    res = []
+    res_list = []
     t_min, t_dist = 0, 0
     curr_t = datetime.utcnow()
     mv = get_magnetic_declination(st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"])
@@ -136,13 +133,14 @@ if st.button("🚀 CALCULER", type="primary") and len(st.session_state.waypoints
         gs = max(20, (tas * math.cos(math.asin(max(-1, min(1, swca))))) - (ws * math.cos(wa)))
         eet = (w2["dist"]/gs)*60
         t_min += eet; t_dist += w2["dist"]; curr_t += timedelta(minutes=eet)
-        res.append({"Branche": f"{w1['name']}->{w2['name']}", "Rv": f"{int(w2['tc']):03d}°", "Vent": f"{int(wd):03d}/{int(ws)}", "Cm": f"{int((w2['tc']-wca-mv)%360):03d}°", "GS": f"{int(gs)}kt", "EET": f"{int(eet):02d}:{int((eet%1)*60):02d}"})
+        res_list.append({"Branche": f"{w1['name']}->{w2['name']}", "Rv": f"{int(w2['tc']):03d}°", "Vent": f"{int(wd):03d}/{int(ws)}", "Cm": f"{int((w2['tc']-wca-mv)%360):03d}°", "GS": f"{int(gs)}kt", "EET": f"{int(eet):02d}:{int((eet%1)*60):02d}"})
     
-    st.session_state.results = pd.DataFrame(res)
+    st.session_state.results = pd.DataFrame(res_list)
     st.session_state.total_info = f"**{t_dist:.1f} NM | {int(t_min)} min | Fuel : {round((t_min/60)*conso + 10, 1)} L**"
 
 if st.session_state.results is not None:
     st.table(st.session_state.results)
     st.success(st.session_state.total_info)
+    # Conversion finale en bytes pour le bouton
     pdf_out = create_pdf(st.session_state.results, st.session_state.total_info)
     st.download_button("📥 PDF", bytes(pdf_out), "log.pdf", "application/pdf")
