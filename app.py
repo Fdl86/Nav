@@ -68,10 +68,9 @@ def create_pdf_simple(df, total_info):
     return pdf.output()
 
 # ─── INTERFACE ───
-st.set_page_config(page_title="SkyAssistant V8", layout="wide")
+st.set_page_config(page_title="SkyAssistant V9", layout="wide")
 
 if 'waypoints' not in st.session_state: st.session_state.waypoints = []
-if 'results' not in st.session_state: st.session_state.results = None
 
 with st.sidebar:
     st.title("🛠️ Paramètres")
@@ -81,18 +80,14 @@ with st.sidebar:
             ap = AIRPORTS[oaci]
             st.session_state.waypoints = [{"name": oaci, "lat": ap["lat"], "lon": ap["lon"], "elev": get_elevation(ap["lat"], ap["lon"]), "alt": 2500}]
             st.rerun()
-    
     st.markdown("---")
     tas = st.number_input("TAS (kt)", 50, 250, 100, key="cfg_tas")
     conso = st.number_input("Conso (L/h)", 5, 100, 22, key="cfg_conso")
-    vz = st.number_input("Vz (ft/min)", 0, 2000, 500, key="cfg_vz")
-    
     st.markdown("---")
     show_relief = st.checkbox("📊 Relief", False, key="chk_relief")
-    optimize_global = st.checkbox("💡 Meilleure Altitude (Trajet)", True, key="chk_opt")
-
+    optimize_global = st.checkbox("💡 Optimiseur d'Altitude", True, key="chk_opt")
     if st.button("🗑️ Reset", key="btn_reset"):
-        st.session_state.waypoints = []; st.session_state.results = None; st.rerun()
+        st.session_state.waypoints = []; st.rerun()
 
 col_map, col_ctrl = st.columns([2, 1])
 
@@ -101,7 +96,6 @@ with col_ctrl:
     tc_in = st.number_input("Route Vraie °", 0, 359, 0, key="in_tc")
     dist_in = st.number_input("Distance NM", 0.1, 100.0, 15.0, key="in_dist")
     alt_in = st.number_input("Altitude ft", 1500, 12500, 2500, step=500, key="in_alt")
-    
     if st.button("➕ Ajouter", key="btn_add") and st.session_state.waypoints:
         last = st.session_state.waypoints[-1]
         n_lat, n_lon = calculate_destination(last["lat"], last["lon"], tc_in, dist_in)
@@ -113,7 +107,7 @@ with col_map:
         m = folium.Map(location=[st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"]], zoom_start=8)
         folium.PolyLine([[w["lat"], w["lon"]] for w in st.session_state.waypoints], color="red").add_to(m)
         for w in st.session_state.waypoints: folium.Marker([w["lat"], w["lon"]], tooltip=w['name']).add_to(m)
-        st_folium(m, width="100%", height=350, key="map_v8")
+        st_folium(m, width="100%", height=350, key="map_v9")
     else: st.info("Initialisez un départ.")
 
 # RELIEF
@@ -121,74 +115,59 @@ if show_relief and len(st.session_state.waypoints) > 1:
     prof = [{"Point": w["name"], "Sol": round(w["elev"]*3.28), "Avion": w["alt"]} for w in st.session_state.waypoints]
     st.area_chart(pd.DataFrame(prof).set_index("Point"), color=["#8B4513", "#0000FF"])
 
-# LOGIQUE DE CALCUL
+# CALCULS
 if len(st.session_state.waypoints) > 1:
     st.markdown("---")
-    res_list = []
-    t_min, t_dist = 0, 0
     curr_t = datetime.utcnow()
     mv = get_magnetic_declination(st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"])
 
     # --- OPTIMISATION GLOBALE AVEC JUSTIFICATION ---
-if optimize_global:
-    # 1. Détermination des niveaux selon la règle semi-circulaire
-    avg_tc = sum(w.get("tc", 0) for w in st.session_state.waypoints[1:]) / (len(st.session_state.waypoints)-1)
-    avg_rm = (avg_tc - mv) % 360
-    levels = [3500, 5500, 7500, 9500] if 0 <= avg_rm < 180 else [2500, 4500, 6500, 8500]
-    
-    analysis_data = []
-    best_time = 9999
-    best_alt_global = 0
-    
-    # 2. Scan de chaque niveau
-    for alt_test in levels:
-        total_time_test = 0
-        gs_list = []
-        for i in range(1, len(st.session_state.waypoints)):
-            w = st.session_state.waypoints[i]
-            wd_t, ws_t = get_wind(w["lat"], w["lon"], alt_test, curr_t)
-            gs_t, _ = calculate_gs_and_wca(tas, w["tc"], wd_t, ws_t)
-            total_time_test += (w["dist"] / gs_t) * 60
-            gs_list.append(gs_t)
+    if optimize_global:
+        avg_tc = sum(w.get("tc", 0) for w in st.session_state.waypoints[1:]) / (len(st.session_state.waypoints)-1)
+        avg_rm = (avg_tc - mv) % 360
+        levels = [3500, 5500, 7500, 9500] if 0 <= avg_rm < 180 else [2500, 4500, 6500, 8500]
         
-        avg_gs_at_alt = sum(gs_list) / len(gs_list)
-        analysis_data.append({"Altitude": f"{alt_test} ft", "GS Moyenne": f"{int(avg_gs_at_alt)} kt", "Temps Total": f"{int(total_time_test)} min"})
+        analysis_data, best_time, best_alt = [], 9999, 0
         
-        if total_time_test < best_time:
-            best_time = total_time_test
-            best_alt_global = alt_test
+        for alt_t in levels:
+            total_time, gs_list = 0, []
+            for i in range(1, len(st.session_state.waypoints)):
+                w = st.session_state.waypoints[i]
+                wd_t, ws_t = get_wind(w["lat"], w["lon"], alt_t, curr_t)
+                gs_t, _ = calculate_gs_and_wca(tas, w["tc"], wd_t, ws_t)
+                total_time += (w["dist"] / gs_t) * 60
+                gs_list.append(gs_t)
+            avg_gs = sum(gs_list) / len(gs_list)
+            analysis_data.append({"Altitude": f"{alt_t} ft", "GS Moy": f"{int(avg_gs)} kt", "Temps": f"{int(total_time)} min"})
+            if total_time < best_time:
+                best_time, best_alt = total_time, alt_t
+        
+        st.info(f"💡 **Altitude recommandée : {best_alt} ft**")
+        with st.expander("🧐 Voir les justifications (Vents & GS Moyenne)"):
+            st.table(pd.DataFrame(analysis_data))
+            st.write("**Détails par segment à l'altitude recommandée :**")
+            for i in range(1, len(st.session_state.waypoints)):
+                w1, w2 = st.session_state.waypoints[i-1], st.session_state.waypoints[i]
+                wd_o, ws_o = get_wind(w2["lat"], w2["lon"], best_alt, curr_t)
+                gs_o, _ = calculate_gs_and_wca(tas, w2["tc"], wd_o, ws_o)
+                st.write(f"- {w1['name']} ➔ {w2['name']} : Vent {int(wd_o)}°/{int(ws_o)}kt | GS {int(gs_o)}kt")
 
-    # 3. Affichage des résultats et justifications
-    st.info(f"💡 **Altitude recommandée : {best_alt_global} ft**")
-    
-    with st.expander("🧐 Voir les justifications du vent"):
-        st.write("Voici la comparaison des performances selon l'altitude (Règle semi-circulaire) :")
-        st.table(pd.DataFrame(analysis_data))
-        
-        st.write("**Détails des vents à l'altitude recommandée :**")
-        for i in range(1, len(st.session_state.waypoints)):
-            w1, w2 = st.session_state.waypoints[i-1], st.session_state.waypoints[i]
-            wd_opt, ws_opt = get_wind(w2["lat"], w2["lon"], best_alt_global, curr_t)
-            gs_opt, _ = calculate_gs_and_wca(tas, w2["tc"], wd_opt, ws_opt)
-            st.write(f"- **{w1['name']} ➔ {w2['name']}** : Vent {int(wd_opt)}°/{int(ws_opt)}kt (GS {int(gs_opt)}kt)")
-
-    # Génération du tableau
+    # --- LOG DE NAVIGATION ---
+    res_list, t_min, t_dist = [], 0, 0
     for i in range(1, len(st.session_state.waypoints)):
         w1, w2 = st.session_state.waypoints[i-1], st.session_state.waypoints[i]
         wd, ws = get_wind(w2["lat"], w2["lon"], w2["alt"], curr_t)
         gs, wca = calculate_gs_and_wca(tas, w2["tc"], wd, ws)
         eet = (w2["dist"]/gs)*60
         t_min += eet; t_dist += w2["dist"]; curr_t += timedelta(minutes=eet)
-        res_list.append({"Branche": f"{w1['name']}➔{w2['name']}", "Alt": f"{w2['alt']}ft", "Vent": f"{int(wd)}/{int(ws)}kt", "Cm": f"{int((w2['tc']-wca-mv)%360):03d}°", "GS": f"{int(gs)}kt", "EET": f"{int(eet):02d}:{int((eet%1)*60):02d}"})
+        res_list.append({"Branche": f"{w1['name']}➔{w2['name']}", "Alt": f"{w2['alt']}ft", "Vent": f"{int(wd)}/{int(ws)}", "Cm": f"{int((w2['tc']-wca-mv)%360):03d}°", "GS": f"{int(gs)}kt", "EET": f"{int(eet):02d}:{int((eet%1)*60):02d}"})
 
-    st.session_state.results = pd.DataFrame(res_list)
-    st.table(st.session_state.results)
-    
-    # FUEL & PDF
-    fuel_total = round((t_min/60)*conso + 10, 1) # +10L forfaitaire (roulage/montée)
-    info_text = f"**Total : {t_dist:.1f} NM | Temps : {int(t_min)} min | Carburant estimé : {fuel_total} L**"
+    df_res = pd.DataFrame(res_list)
+    st.table(df_res)
+    fuel = round((t_min/60)*conso + 10, 1)
+    info_text = f"**Total : {t_dist:.1f} NM | Temps : {int(t_min)} min | Fuel : {fuel} L**"
     st.success(info_text)
     
     if st.button("📥 Générer PDF", key="btn_pdf"):
-        pdf_bytes = create_pdf_simple(st.session_state.results, info_text)
-        st.download_button("Cliquez ici pour télécharger", bytes(pdf_bytes), "nav.pdf", "application/pdf")
+        pdf_bytes = create_pdf_simple(df_res, info_text)
+        st.download_button("Télécharger le PDF", bytes(pdf_bytes), "navigation.pdf", "application/pdf")
