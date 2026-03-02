@@ -28,7 +28,7 @@ AIRPORTS = load_airports()
 def get_elevation(lat, lon):
     try:
         res = requests.get(ELEVATION_URL, params={"latitude": lat, "longitude": lon}).json()
-        return res.get("elevation", [0])[0]
+        return res.get("elevation", [0])[0] # Retourne des mètres
     except: return 0
 
 def get_magnetic_declination(lat, lon):
@@ -56,27 +56,24 @@ def get_wind_at_alt(lat, lon, alt_ft, time_dt):
     idx = min(range(len(resp["hourly"]["time"])), key=lambda k: abs(datetime.fromisoformat(resp["hourly"]["time"][k]) - time_dt))
     return resp["hourly"][f"wind_direction_{level}hPa"][idx], resp["hourly"][f"wind_speed_{level}hPa"][idx]
 
-# ─── GENERATION PDF (CORRIGÉE POUR FPDF2) ──────────────────────────────────
+# ─── GENERATION PDF (FPDF2) ────────────────────────────────────────────────
 def create_pdf(df, total_info):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Helvetica", 'B', 16)
-    pdf.cell(0, 10, "LOG DE NAVIGATION AROME", align='C', center=True)
+    pdf.cell(0, 10, "LOG DE NAVIGATION AROME", align='C')
     pdf.ln(15)
     
     pdf.set_font("Helvetica", size=10)
-    # Header tableau
     cols = ["Branche", "Rv", "Vent", "Cm", "GS", "EET"]
     col_width = 31
     for col in cols:
         pdf.cell(col_width, 10, col, border=1, align='C')
     pdf.ln()
     
-    # Data
     pdf.set_font("Helvetica", size=9)
     for _, row in df.iterrows():
         for col in cols:
-            # Nettoyage des caractères spéciaux pour compatibilité PDF standard
             text = str(row[col]).replace("➔", "->")
             pdf.cell(col_width, 10, text, border=1, align='C')
         pdf.ln()
@@ -85,8 +82,6 @@ def create_pdf(df, total_info):
     pdf.set_font("Helvetica", 'I', 11)
     clean_info = total_info.replace("**", "")
     pdf.multi_cell(0, 10, clean_info)
-    
-    # Retourne les bytes pour Streamlit
     return bytes(pdf.output())
 
 # ─── INTERFACE STREAMLIT ───────────────────────────────────────────────────
@@ -101,9 +96,9 @@ with st.sidebar:
     oaci_search = st.text_input("🔍 Recherche OACI (ex: LFBI)", "").upper()
     
     if oaci_search in AIRPORTS and not st.session_state.waypoints:
-        if st.button(f"Partir de {oaci_search}"):
+        if st.button(f"Initialiser Départ : {oaci_search}"):
             ap = AIRPORTS[oaci_search]
-            st.session_state.waypoints = [{"name": oaci_search, "lat": ap["lat"], "lon": ap["lon"], "elev": get_elevation(ap["lat"], ap["lon"])}]
+            st.session_state.waypoints = [{"name": oaci_search, "lat": ap["lat"], "lon": ap["lon"], "elev": get_elevation(ap["lat"], ap["lon"]), "alt": 0}]
             st.rerun()
 
     st.markdown("---")
@@ -111,16 +106,16 @@ with st.sidebar:
     conso_h = st.number_input("Conso (L/h)", 5, 100, 22)
     forfait_fuel = st.number_input("Forfait Fuel (L)", 0, 50, 10)
     
-    if st.button("🗑️ Reset Complet"):
+    if st.button("🗑️ Reset Complet", type="secondary"):
         st.session_state.waypoints = []; st.session_state.results = None; st.rerun()
 
 col_left, col_right = st.columns([2, 1])
 
 with col_right:
     st.subheader("📍 Segments")
-    tc = st.number_input("Route Vraie °", 0, 359, 0)
+    tc = st.number_input("Route Vraie (Rv) °", 0, 359, 0)
     dist = st.number_input("Distance NM", 0.1, 200.0, 15.0)
-    alt_seg = st.number_input("Altitude ft", 500, 15000, 2500, step=500)
+    alt_seg = st.number_input("Altitude segment (ft)", 500, 15000, 2500, step=500)
     
     if st.button("➕ Ajouter Segment") and st.session_state.waypoints:
         last = st.session_state.waypoints[-1]
@@ -140,17 +135,30 @@ with col_right:
 
 with col_left:
     if st.session_state.waypoints:
+        # --- CARTE ---
         m = folium.Map(location=[st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"]], zoom_start=8, tiles="CartoDB positron")
         folium.PolyLine([[w["lat"], w["lon"]] for w in st.session_state.waypoints], color="red", weight=4).add_to(m)
         for w in st.session_state.waypoints: 
             folium.Marker([w["lat"], w["lon"]], tooltip=w['name']).add_to(m)
         st_folium(m, width="100%", height=400, key="main_map")
         
-        elevs = [w["elev"] for w in st.session_state.waypoints]
-        if len(elevs) > 1:
-            st.area_chart(pd.DataFrame({"Terrain (m)": elevs}))
+        # --- PROFIL DE VOL VERTICAL (Terrain vs Avion) ---
+        st.markdown("### 🏔️ Profil de Vol")
+        data_profil = []
+        for w in st.session_state.waypoints:
+            data_profil.append({
+                "Point": w["name"],
+                "Terrain (ft)": round(w["elev"] * 3.28084), # Conversion m -> ft
+                "Altitude Avion (ft)": w.get("alt", 0) if w.get("alt", 0) > 0 else 0
+            })
+        
+        df_profil = pd.DataFrame(data_profil).set_index("Point")
+        # Marron pour le terrain, Bleu pour l'avion
+        st.area_chart(df_profil, color=["#8B4513", "#0000FF"])
+        st.caption("Comparaison de l'altitude terrain (pieds) et de votre altitude de vol choisie.")
 
 # ─── CALCUL LOG DE NAV ─────────────────────────────────────────────────────
+
 if st.button("🚀 CALCULER LOG & CARBURANT", type="primary") and len(st.session_state.waypoints) > 1:
     res_list = []
     curr_t = datetime.utcnow()
@@ -180,13 +188,13 @@ if st.button("🚀 CALCULER LOG & CARBURANT", type="primary") and len(st.session
 
     st.session_state.results = pd.DataFrame(res_list)
     fuel = round((t_min_total/60)*conso_h + forfait_fuel, 1)
-    st.session_state.total_info = f"**TOTAL : {t_dist_total:.1f} NM | {int(t_min_total)} min | Carburant : {fuel} L**"
+    st.session_state.total_info = f"**TOTAL : {t_dist_total:.1f} NM | {int(t_min_total)} min | Carburant estimé : {fuel} L**"
 
 if st.session_state.results is not None:
     st.table(st.session_state.results)
     st.success(st.session_state.total_info)
     
-    # GENERATION PDF
+    # BOUTON DE TÉLÉCHARGEMENT PDF
     try:
         pdf_bytes = create_pdf(st.session_state.results, st.session_state.total_info)
         st.download_button(
@@ -196,4 +204,4 @@ if st.session_state.results is not None:
             mime="application/pdf"
         )
     except Exception as e:
-        st.error(f"Erreur lors de la préparation du PDF : {e}")
+        st.error(f"Erreur PDF : {e}")
