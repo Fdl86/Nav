@@ -6,7 +6,7 @@ import math
 import folium
 from streamlit_folium import st_folium
 from fpdf import FPDF
-import base64
+import io
 
 # ─── CONFIGURATION & DATA ──────────────────────────────────────────────────
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
@@ -40,12 +40,15 @@ def calculate_destination(lat, lon, bearing, dist_nm):
     lat1, lon1 = math.radians(lat), math.radians(lon)
     lat2 = lat1 + (dist_nm/R) * math.cos(brng)
     dlat = lat2 - lat1
-    q = math.cos(lat1) if abs(dlat) < 1e-10 else dlat / math.log(math.tan(lat2/2 + math.pi/4)/math.tan(lat1/2 + math.pi/4))
+    if abs(dlat) < 1e-10:
+        q = math.cos(lat1)
+    else:
+        dphi = math.log(math.tan(lat2/2 + math.pi/4)/math.tan(lat1/2 + math.pi/4))
+        q = dlat / dphi
     lon2 = lon1 + (dist_nm/R) * math.sin(brng) / q
     return math.degrees(lat2), math.degrees(lon2)
 
 def get_wind_at_alt(lat, lon, alt_ft, time_dt):
-    # Interpolation simple entre niveaux de pression
     level = min(PRESSURE_LEVELS, key=lambda h: abs(h - (1013.25 * (1 - 0.0065 * (alt_ft*0.3048) / 288.15)**5.255)))
     params = {"latitude": lat, "longitude": lon, "hourly": f"wind_speed_{level}hPa,wind_direction_{level}hPa",
               "models": "meteofrance_seamless", "wind_speed_unit": "kn", "timezone": "UTC", "forecast_days": 1}
@@ -53,54 +56,49 @@ def get_wind_at_alt(lat, lon, alt_ft, time_dt):
     idx = min(range(len(resp["hourly"]["time"])), key=lambda k: abs(datetime.fromisoformat(resp["hourly"]["time"][k]) - time_dt))
     return resp["hourly"][f"wind_direction_{level}hPa"][idx], resp["hourly"][f"wind_speed_{level}hPa"][idx]
 
-# ─── GENERATION PDF ────────────────────────────────────────────────────────
-from fpdf import FPDF # L'import reste le même mais utilise fpdf2 derrière
-
+# ─── GENERATION PDF (CORRIGÉE POUR FPDF2) ──────────────────────────────────
 def create_pdf(df, total_info):
     pdf = FPDF()
     pdf.add_page()
-    # On utilise une police standard qui supporte mieux les symboles
     pdf.set_font("Helvetica", 'B', 16)
-    pdf.cell(0, 10, "LOG DE NAVIGATION AROME", new_x="LMARGIN", new_y="NEXT", align='C')
+    pdf.cell(0, 10, "LOG DE NAVIGATION AROME", align='C', center=True)
+    pdf.ln(15)
     
     pdf.set_font("Helvetica", size=10)
-    pdf.ln(10)
-    
     # Header tableau
     cols = ["Branche", "Rv", "Vent", "Cm", "GS", "EET"]
+    col_width = 31
     for col in cols:
-        pdf.cell(31, 10, col, border=1)
+        pdf.cell(col_width, 10, col, border=1, align='C')
     pdf.ln()
     
-    # Data - On nettoie les caractères flèche pour le PDF
+    # Data
+    pdf.set_font("Helvetica", size=9)
     for _, row in df.iterrows():
         for col in cols:
-            # On remplace la flèche ➔ par -> pour être sûr du rendu PDF
-            txt = str(row[col]).replace("➔", "->")
-            pdf.cell(31, 10, txt, border=1)
+            # Nettoyage des caractères spéciaux pour compatibilité PDF standard
+            text = str(row[col]).replace("➔", "->")
+            pdf.cell(col_width, 10, text, border=1, align='C')
         pdf.ln()
-        
+    
     pdf.ln(10)
-    pdf.set_font("Helvetica", 'I', 12)
-    # Nettoyage des ** du markdown pour le PDF
+    pdf.set_font("Helvetica", 'I', 11)
     clean_info = total_info.replace("**", "")
     pdf.multi_cell(0, 10, clean_info)
     
-    # Avec fpdf2, on récupère les bytes directement
-    return pdf.output()
+    # Retourne les bytes pour Streamlit
+    return bytes(pdf.output())
 
 # ─── INTERFACE STREAMLIT ───────────────────────────────────────────────────
 st.set_page_config(page_title="SkyAssistant AROME", layout="wide")
 
-# Mode Nuit / Style personnalisé
-st.markdown("""<style> .main { background-color: #121212; color: white; } </style>""", unsafe_allow_html=True)
-
 if 'waypoints' not in st.session_state: st.session_state.waypoints = []
 if 'results' not in st.session_state: st.session_state.results = None
+if 'total_info' not in st.session_state: st.session_state.total_info = ""
 
 with st.sidebar:
     st.title("🛠️ Paramètres Vol")
-    oaci_search = st.text_input("🔍 Recherche OACI (ex: LFBZ)", "").upper()
+    oaci_search = st.text_input("🔍 Recherche OACI (ex: LFBI)", "").upper()
     
     if oaci_search in AIRPORTS and not st.session_state.waypoints:
         if st.button(f"Partir de {oaci_search}"):
@@ -111,7 +109,7 @@ with st.sidebar:
     st.markdown("---")
     tas_kts = st.number_input("Vitesse Propre (TAS) kt", 50, 250, 100)
     conso_h = st.number_input("Conso (L/h)", 5, 100, 22)
-    forfait_fuel = st.number_input("Forfait Fuel (Roulage/Rés) L", 0, 50, 10)
+    forfait_fuel = st.number_input("Forfait Fuel (L)", 0, 50, 10)
     
     if st.button("🗑️ Reset Complet"):
         st.session_state.waypoints = []; st.session_state.results = None; st.rerun()
@@ -124,24 +122,33 @@ with col_right:
     dist = st.number_input("Distance NM", 0.1, 200.0, 15.0)
     alt_seg = st.number_input("Altitude ft", 500, 15000, 2500, step=500)
     
-    if st.button("➕ Ajouter") and st.session_state.waypoints:
+    if st.button("➕ Ajouter Segment") and st.session_state.waypoints:
         last = st.session_state.waypoints[-1]
         n_lat, n_lon = calculate_destination(last["lat"], last["lon"], tc, dist)
-        st.session_state.waypoints.append({"name": f"WP{len(st.session_state.waypoints)}", "lat": round(n_lat, 4), "lon": round(n_lon, 4), 
-                                           "tc": tc, "dist": dist, "alt": alt_seg, "elev": get_elevation(n_lat, n_lon)})
+        st.session_state.waypoints.append({
+            "name": f"WP{len(st.session_state.waypoints)}", 
+            "lat": round(n_lat, 4), "lon": round(n_lon, 4), 
+            "tc": tc, "dist": dist, "alt": alt_seg, 
+            "elev": get_elevation(n_lat, n_lon)
+        })
         st.session_state.results = None; st.rerun()
+
+    if len(st.session_state.waypoints) > 1:
+        if st.button("Supprimer dernier point"):
+            st.session_state.waypoints.pop()
+            st.session_state.results = None; st.rerun()
 
 with col_left:
     if st.session_state.waypoints:
-        m = folium.Map(location=[st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"]], zoom_start=8, tiles="CartoDB DarkMatter")
-        folium.PolyLine([[w["lat"], w["lon"]] for w in st.session_state.waypoints], color="orange", weight=5).add_to(m)
-        for w in st.session_state.waypoints: folium.Marker([w["lat"], w["lon"]], tooltip=w['name']).add_to(m)
+        m = folium.Map(location=[st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"]], zoom_start=8, tiles="CartoDB positron")
+        folium.PolyLine([[w["lat"], w["lon"]] for w in st.session_state.waypoints], color="red", weight=4).add_to(m)
+        for w in st.session_state.waypoints: 
+            folium.Marker([w["lat"], w["lon"]], tooltip=w['name']).add_to(m)
         st_folium(m, width="100%", height=400, key="main_map")
         
-        # Petit profil de relief simplifié
         elevs = [w["elev"] for w in st.session_state.waypoints]
         if len(elevs) > 1:
-            st.area_chart(pd.DataFrame({"Altitude Terrain (m)": elevs}))
+            st.area_chart(pd.DataFrame({"Terrain (m)": elevs}))
 
 # ─── CALCUL LOG DE NAV ─────────────────────────────────────────────────────
 if st.button("🚀 CALCULER LOG & CARBURANT", type="primary") and len(st.session_state.waypoints) > 1:
@@ -155,24 +162,38 @@ if st.button("🚀 CALCULER LOG & CARBURANT", type="primary") and len(st.session
         wd, ws = get_wind_at_alt(w2["lat"], w2["lon"], w2["alt"], curr_t)
         
         wa = math.radians(wd - w2["tc"])
-        wca = math.degrees(math.asin(max(-1, min(1, (ws/tas_kts)*math.sin(wa)))))
-        gs = max(20, (tas_kts * math.cos(math.radians(wca))) - (ws * math.cos(wa)))
+        sin_wca = (ws/tas_kts)*math.sin(wa)
+        wca = math.degrees(math.asin(max(-1, min(1, sin_wca))))
+        gs = max(20, (tas_kts * math.cos(math.asin(max(-1, min(1, sin_wca))))) - (ws * math.cos(wa)))
         
         eet_min = (w2["dist"]/gs)*60
         t_min_total += eet_min; t_dist_total += w2["dist"]; curr_t += timedelta(minutes=eet_min)
         
-        res_list.append({"Branche": f"{w1['name']}➔{w2['name']}", "Rv": f"{int(w2['tc']):03d}°", 
-                         "Vent": f"{int(wd):03d}/{int(ws)}kt", "Cm": f"{int((w2['tc']-wca-mv)%360):03d}°",
-                         "GS": f"{int(gs)}kt", "EET": f"{int(eet_min):02d}:{int((eet_min%1)*60):02d}"})
+        res_list.append({
+            "Branche": f"{w1['name']}➔{w2['name']}", 
+            "Rv": f"{int(w2['tc']):03d}°", 
+            "Vent": f"{int(wd):03d}/{int(ws)}kt", 
+            "Cm": f"{int((w2['tc']-wca-mv)%360):03d}°",
+            "GS": f"{int(gs)}kt", 
+            "EET": f"{int(eet_min):02d}:{int((eet_min%1)*60):02d}"
+        })
 
     st.session_state.results = pd.DataFrame(res_list)
-    fuel_total = round((t_min_total/60)*conso_h + forfait_fuel, 1)
-    st.session_state.total_info = f"**TOTAL : {t_dist_total:.1f} NM | {int(t_min_total)} min | Carburant estimé : {fuel_total} L**"
+    fuel = round((t_min_total/60)*conso_h + forfait_fuel, 1)
+    st.session_state.total_info = f"**TOTAL : {t_dist_total:.1f} NM | {int(t_min_total)} min | Carburant : {fuel} L**"
 
 if st.session_state.results is not None:
     st.table(st.session_state.results)
     st.success(st.session_state.total_info)
     
-    # BOUTON PDF
-    pdf_data = create_pdf(st.session_state.results, st.session_state.total_info)
-    st.download_button(label="📥 Télécharger le Log en PDF", data=pdf_data, file_name="log_nav.pdf", mime="application/pdf")
+    # GENERATION PDF
+    try:
+        pdf_bytes = create_pdf(st.session_state.results, st.session_state.total_info)
+        st.download_button(
+            label="📥 Télécharger le Log en PDF",
+            data=pdf_bytes,
+            file_name="log_nav_arome.pdf",
+            mime="application/pdf"
+        )
+    except Exception as e:
+        st.error(f"Erreur lors de la préparation du PDF : {e}")
