@@ -107,7 +107,16 @@ with col_map:
         m = folium.Map(location=[st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"]], zoom_start=8)
         folium.PolyLine([[w["lat"], w["lon"]] for w in st.session_state.waypoints], color="red").add_to(m)
         for w in st.session_state.waypoints: folium.Marker([w["lat"], w["lon"]], tooltip=w['name']).add_to(m)
-        st_folium(m,width="100%",height=350,key="map_v9",returned_objects=[],capture_all_events=False,use_container_width=True)
+        st_folium(
+            m, 
+            width="100%", 
+            height=350, 
+            key="map_v9", 
+            # On ajoute ces trois lignes pour bloquer le rafraîchissement au scroll/clic :
+            returned_objects=[], 
+            capture_all_events=False,
+            use_container_width=True
+        )
     else: st.info("Initialisez un départ.")
 
 # RELIEF
