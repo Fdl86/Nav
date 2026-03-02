@@ -4,4 +4,4 @@ streamlit-folium>=0.21.0
 folium
 requests
 pandas
-fpdf
+fpdf2
