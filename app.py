@@ -54,25 +54,40 @@ def get_wind_at_alt(lat, lon, alt_ft, time_dt):
     return resp["hourly"][f"wind_direction_{level}hPa"][idx], resp["hourly"][f"wind_speed_{level}hPa"][idx]
 
 # ─── GENERATION PDF ────────────────────────────────────────────────────────
+from fpdf import FPDF # L'import reste le même mais utilise fpdf2 derrière
+
 def create_pdf(df, total_info):
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_font("Arial", 'B', 16)
-    pdf.cell(200, 10, "LOG DE NAVIGATION AROME", ln=True, align='C')
-    pdf.set_font("Arial", size=10)
+    # On utilise une police standard qui supporte mieux les symboles
+    pdf.set_font("Helvetica", 'B', 16)
+    pdf.cell(0, 10, "LOG DE NAVIGATION AROME", new_x="LMARGIN", new_y="NEXT", align='C')
+    
+    pdf.set_font("Helvetica", size=10)
     pdf.ln(10)
+    
     # Header tableau
     cols = ["Branche", "Rv", "Vent", "Cm", "GS", "EET"]
-    for col in cols: pdf.cell(32, 10, col, border=1)
+    for col in cols:
+        pdf.cell(31, 10, col, border=1)
     pdf.ln()
-    # Data
+    
+    # Data - On nettoie les caractères flèche pour le PDF
     for _, row in df.iterrows():
-        for col in cols: pdf.cell(32, 10, str(row[col]), border=1)
+        for col in cols:
+            # On remplace la flèche ➔ par -> pour être sûr du rendu PDF
+            txt = str(row[col]).replace("➔", "->")
+            pdf.cell(31, 10, txt, border=1)
         pdf.ln()
+        
     pdf.ln(10)
-    pdf.set_font("Arial", 'I', 12)
-    pdf.cell(0, 10, total_info.replace("**", ""), ln=True)
-    return pdf.output(dest='S').encode('latin-1')
+    pdf.set_font("Helvetica", 'I', 12)
+    # Nettoyage des ** du markdown pour le PDF
+    clean_info = total_info.replace("**", "")
+    pdf.multi_cell(0, 10, clean_info)
+    
+    # Avec fpdf2, on récupère les bytes directement
+    return pdf.output()
 
 # ─── INTERFACE STREAMLIT ───────────────────────────────────────────────────
 st.set_page_config(page_title="SkyAssistant AROME", layout="wide")
