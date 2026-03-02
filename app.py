@@ -107,7 +107,7 @@ with col_map:
         m = folium.Map(location=[st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"]], zoom_start=8)
         folium.PolyLine([[w["lat"], w["lon"]] for w in st.session_state.waypoints], color="red").add_to(m)
         for w in st.session_state.waypoints: folium.Marker([w["lat"], w["lon"]], tooltip=w['name']).add_to(m)
-        st_folium(m, width="100%", height=350, key="map_v9")
+        st_folium(m,width="100%",height=350,key="map_v9",returned_objects=[],capture_all_events=False,use_container_width=True)
     else: st.info("Initialisez un départ.")
 
 # RELIEF
@@ -121,50 +121,71 @@ if len(st.session_state.waypoints) > 1:
     curr_t = datetime.utcnow()
     mv = get_magnetic_declination(st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"])
 
-    # --- OPTIMISATION GLOBALE AVEC JUSTIFICATION ---
-    # --- OPTIMISATION GLOBALE FILTRÉE (+/- 2000ft) ---
-    if optimize_global:
-        # 1. On prend l'altitude du premier segment comme référence
-        alt_reference = st.session_state.waypoints[1]["alt"]
-        
-        # 2. Détermination des niveaux selon la règle semi-circulaire
-        avg_tc = sum(w.get("tc", 0) for w in st.session_state.waypoints[1:]) / (len(st.session_state.waypoints)-1)
-        avg_rm = (avg_tc - mv) % 360
-        
-        # Tous les niveaux théoriques
-        all_levels = [3500, 5500, 7500, 9500, 11500] if 0 <= avg_rm < 180 else [2500, 4500, 6500, 8500, 10500]
-        
-        # FILTRE : On ne garde que ceux à +/- 2000ft de l'altitude prévue
-        levels = [l for l in all_levels if abs(l - alt_reference) <= 2000]
-        
-        # Si aucun niveau ne rentre dans le filtre (ex: prévu 1500ft), on force au moins le premier niveau VFR
-        if not levels:
-            levels = [all_levels[0]]
+    # --- OPTIMISATION GLOBALE AVEC JUSTIFICATION DÉTAILLÉE ---
+if optimize_global and len(st.session_state.waypoints) > 1:
+    # 1. Récupération de l'altitude prévue (on prend celle du premier segment ajouté)
+    alt_prevue = st.session_state.waypoints[1]["alt"]
+    
+    # 2. Règle semi-circulaire basée sur la route moyenne
+    avg_tc = sum(w.get("tc", 0) for w in st.session_state.waypoints[1:]) / (len(st.session_state.waypoints)-1)
+    avg_rm = (avg_tc - mv) % 360
+    all_levels = [3500, 5500, 7500, 9500] if 0 <= avg_rm < 180 else [2500, 4500, 6500, 8500]
+    
+    # Filtre +/- 2000ft
+    levels_to_scan = [l for l in all_levels if abs(l - alt_prevue) <= 2000]
+    if not levels_to_scan: levels_to_scan = [all_levels[0]]
 
-        analysis_data, best_time, best_alt = [], 9999, 0
+    # 3. Calcul de la performance à l'altitude PRÉVUE (pour comparer)
+    gs_prevue_list = []
+    for w in st.session_state.waypoints[1:]:
+        wd_p, ws_p = get_wind(w["lat"], w["lon"], alt_prevue, curr_t)
+        gs_p, _ = calculate_gs_and_wca(tas, w["tc"], wd_p, ws_p)
+        gs_prevue_list.append(gs_p)
+    avg_gs_prevue = sum(gs_prevue_list) / len(gs_prevue_list)
+
+    # 4. Scan des autres niveaux
+    analysis_data, best_time, best_alt = [], 9999, 0
+    
+    for alt_t in levels_to_scan:
+        total_time, gs_list = 0, []
+        for i in range(1, len(st.session_state.waypoints)):
+            w = st.session_state.waypoints[i]
+            wd_t, ws_t = get_wind(w["lat"], w["lon"], alt_t, curr_t)
+            gs_t, _ = calculate_gs_and_wca(tas, w["tc"], wd_t, ws_t)
+            total_time += (w["dist"] / gs_t) * 60
+            gs_list.append(gs_t)
         
-        for alt_t in levels:
-            total_time, gs_list = 0, []
-            for i in range(1, len(st.session_state.waypoints)):
-                w = st.session_state.waypoints[i]
-                wd_t, ws_t = get_wind(w["lat"], w["lon"], alt_t, curr_t)
-                gs_t, _ = calculate_gs_and_wca(tas, w["tc"], wd_t, ws_t)
-                total_time += (w["dist"] / gs_t) * 60
-                gs_list.append(gs_t)
-            
-            avg_gs = sum(gs_list) / len(gs_list)
-            diff_gs = int(avg_gs - (sum([(w["dist"]/((tas*math.cos(math.asin((get_wind(w["lat"],w["lon"],alt_reference,curr_t)[1]/tas)*math.sin(math.radians(get_wind(w["lat"],w["lon"],alt_reference,curr_t)[0]-w["tc"])))))-(get_wind(w["lat"],w["lon"],alt_reference,curr_t)[1]*math.cos(math.radians(get_wind(w["lat"],w["lon"],alt_reference,curr_t)[0]-w["tc"]))))) for w in st.session_state.waypoints[1:]]) / (len(st.session_state.waypoints)-1)))
-            
-            analysis_data.append({
-                "Altitude": f"{alt_t} ft", 
-                "GS Moy": f"{int(avg_gs)} kt", 
-                "Temps": f"{int(total_time)} min"
-            })
-            
-            if total_time < best_time:
-                best_time, best_alt = total_time, alt_t
+        avg_gs_t = sum(gs_list) / len(gs_list)
+        diff = int(avg_gs_t - avg_gs_prevue)
+        prefix = "+" if diff > 0 else ""
         
-        st.info(f"💡 **Altitude recommandée (proche de votre altitude prévue) : {best_alt} ft**")
+        analysis_data.append({
+            "Altitude": f"{alt_t} ft", 
+            "GS Moyenne": f"{int(avg_gs_t)} kt", 
+            "Vs Prévue": f"{prefix}{diff} kt",
+            "Temps total": f"{int(total_time)} min"
+        })
+        
+        if total_time < best_time:
+            best_time, best_alt = total_time, alt_t
+
+    # 5. AFFICHAGE
+    if best_alt == alt_prevue:
+        st.success(f"✅ Votre altitude prévue ({alt_prevue} ft) est optimale pour le vent actuel.")
+    else:
+        gain = int(avg_gs_prevue * (best_time/60)) # Estimation louche mais parlante
+        st.info(f"💡 **Altitude recommandée : {best_alt} ft** (Gain moyen de {int(sum(gs_list)/len(gs_list) - avg_gs_prevue)} kt)")
+    
+    with st.expander("🧐 Justification de l'analyse"):
+        st.write(f"Comparaison par rapport à votre altitude de {alt_prevue} ft :")
+        st.table(pd.DataFrame(analysis_data))
+        
+        st.write(f"**Détails des vents au niveau {best_alt} ft :**")
+        for i in range(1, len(st.session_state.waypoints)):
+            w1, w2 = st.session_state.waypoints[i-1], st.session_state.waypoints[i]
+            wd_o, ws_o = get_wind(w2["lat"], w2["lon"], best_alt, curr_t)
+            gs_o, _ = calculate_gs_and_wca(tas, w2["tc"], wd_o, ws_o)
+            st.write(f"- **Segment {i}** ({w1['name']}➔{w2['name']}) : Vent de {int(wd_o)}° à {int(ws_o)}kt. Votre GS sera de {int(gs_o)}kt.")
 
     # --- LOG DE NAVIGATION ---
     res_list, t_min, t_dist = [], 0, 0
