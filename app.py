@@ -174,9 +174,9 @@ if st.button("🚀 CALCULER LE LOG DE NAV", type="primary") and len(st.session_s
             results.append({
                 "Segment": f"{start['name']}→{end['name']}",
                 "Alt": f"{alt_ft}ft",
-                "Vent (AROME)": f"{wind_dir:03d}° / {wind_kt:.0f}kt",
+                "Vent (AROME)": f"{int(wind_dir):03d}° / {wind_kt:.0f}kt",
                 "Dérive": f"{wca_deg:+.1f}°",
-                "Cm (Cap)": f"{cm:03d}°",
+                "Cm (Cap)": f"{int(cm):03d}°", # Correction ici
                 "GS": f"{gs:.0f}kt",
                 "Temps": f"{t_min:.1f} min"
             })
