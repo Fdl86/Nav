@@ -1,6 +1,6 @@
-altair<5
-streamlit
-streamlit-folium
-folium
+fpdf
 requests
 pandas
+streamlit-folium
+folium
+altair
