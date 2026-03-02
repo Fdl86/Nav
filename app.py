@@ -5,11 +5,11 @@ from datetime import datetime, timedelta
 import math
 import folium
 from streamlit_folium import st_folium
+from fpdf import FPDF
 
 # ─── CONFIG & DATA ───
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
 ELEVATION_URL = "https://api.open-meteo.com/v1/elevation"
-# Niveaux de pression disponibles pour le scan
 PRESSURE_MAP = {2000: 950, 3000: 900, 4000: 850, 5000: 850, 6000: 800, 7000: 800, 8000: 750, 9000: 700, 10000: 700}
 
 @st.cache_data(ttl=86400)
@@ -18,12 +18,11 @@ def load_airports():
         df = pd.read_csv("https://ourairports.com/data/airports.csv", usecols=['ident','name','latitude_deg','longitude_deg','iso_country','type'])
         fr = df[(df['iso_country']=='FR') & (df['type'].isin(['large_airport','medium_airport','small_airport'])) & (df['ident'].str.len()==4)]
         return {row['ident']: {"name":row['name'], "lat":row['latitude_deg'], "lon":row['longitude_deg']} for _,row in fr.iterrows()}
-    except:
-        return {"LFBI": {"name":"Poitiers Biard", "lat":46.5877, "lon":0.3069}}
+    except: return {"LFBI": {"name":"Poitiers Biard", "lat":46.5877, "lon":0.3069}}
 
 AIRPORTS = load_airports()
 
-# ─── LOGIQUE AÉRO ───
+# ─── FONCTIONS TECHNIQUES ───
 def get_elevation(lat, lon):
     try:
         res = requests.get(ELEVATION_URL, params={"latitude": lat, "longitude": lon}).json()
@@ -36,7 +35,7 @@ def get_magnetic_declination(lat, lon):
 def calculate_gs_and_wca(tas, tc, wd, ws):
     wa = math.radians(wd - tc)
     sin_wca = (ws/tas)*math.sin(wa)
-    if abs(sin_wca) > 1: return 20, 0 # Vent trop fort
+    if abs(sin_wca) > 1: return 20, 0
     wca = math.degrees(math.asin(sin_wca))
     gs = (tas * math.cos(math.radians(wca))) - (ws * math.cos(wa))
     return max(20, gs), round(wca)
@@ -56,110 +55,120 @@ def calculate_destination(lat, lon, bearing, dist_nm):
     lo2 = lo1 + (dist_nm/R) * math.sin(brng) / q
     return math.degrees(la2), math.degrees(lo2)
 
+def create_pdf_simple(df, total_info):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Helvetica", 'B', 14)
+    pdf.cell(0, 10, "LOG DE NAVIGATION", ln=True, align='C')
+    pdf.set_font("Helvetica", size=10)
+    for _, row in df.iterrows():
+        pdf.cell(0, 8, f"{row['Branche']} | Cm:{row['Cm']} | GS:{row['GS']} | EET:{row['EET']}", ln=True, border=1)
+    pdf.ln(5)
+    pdf.multi_cell(0, 10, total_info.replace("**", ""))
+    return pdf.output()
+
 # ─── INTERFACE ───
-st.set_page_config(page_title="SkyAssistant Pro", layout="wide")
+st.set_page_config(page_title="SkyAssistant V8", layout="wide")
 
 if 'waypoints' not in st.session_state: st.session_state.waypoints = []
+if 'results' not in st.session_state: st.session_state.results = None
 
 with st.sidebar:
-    st.title("✈️ Navigation Pro")
-    oaci = st.text_input("🔍 Départ OACI", "").upper()
+    st.title("🛠️ Paramètres")
+    oaci = st.text_input("🔍 Départ OACI", "", key="start_oaci").upper()
     if oaci in AIRPORTS and not st.session_state.waypoints:
-        if st.button(f"Initialiser {oaci}"):
+        if st.button(f"Initialiser {oaci}", key="btn_init"):
             ap = AIRPORTS[oaci]
             st.session_state.waypoints = [{"name": oaci, "lat": ap["lat"], "lon": ap["lon"], "elev": get_elevation(ap["lat"], ap["lon"]), "alt": 2500}]
             st.rerun()
     
     st.markdown("---")
-    tas = st.number_input("Vitesse Propre (TAS) kt", 50, 250, 100)
-    vz = st.number_input("Vz moyenne (ft/min)", 0, 2000, 500)
+    tas = st.number_input("TAS (kt)", 50, 250, 100, key="cfg_tas")
+    conso = st.number_input("Conso (L/h)", 5, 100, 22, key="cfg_conso")
+    vz = st.number_input("Vz (ft/min)", 0, 2000, 500, key="cfg_vz")
     
     st.markdown("---")
-    show_relief = st.checkbox("📊 Afficher Profil Relief", value=False)
-    optimize_alt = st.checkbox("💡 Optimiseur d'Altitude", value=True)
+    show_relief = st.checkbox("📊 Relief", False, key="chk_relief")
+    optimize_global = st.checkbox("💡 Meilleure Altitude (Trajet)", True, key="chk_opt")
 
-    if st.button("🗑️ Reset"):
-        st.session_state.waypoints = []; st.rerun()
+    if st.button("🗑️ Reset", key="btn_reset"):
+        st.session_state.waypoints = []; st.session_state.results = None; st.rerun()
 
 col_map, col_ctrl = st.columns([2, 1])
 
 with col_ctrl:
-    st.subheader("📍 Ajouter Segment")
-    tc = st.number_input("Route Vraie °", 0, 359, 0)
-    dist = st.number_input("Distance NM", 0.1, 100.0, 15.0)
-    alt_sel = st.number_input("Altitude ft", 1500, 12500, 2500, step=500)
+    st.subheader("📍 Segments")
+    tc_in = st.number_input("Route Vraie °", 0, 359, 0, key="in_tc")
+    dist_in = st.number_input("Distance NM", 0.1, 100.0, 15.0, key="in_dist")
+    alt_in = st.number_input("Altitude ft", 1500, 12500, 2500, step=500, key="in_alt")
     
-    if st.button("➕ Ajouter") and st.session_state.waypoints:
+    if st.button("➕ Ajouter", key="btn_add") and st.session_state.waypoints:
         last = st.session_state.waypoints[-1]
-        n_lat, n_lon = calculate_destination(last["lat"], last["lon"], tc, dist)
-        st.session_state.waypoints.append({"name": f"WP{len(st.session_state.waypoints)}", "lat": round(n_lat, 4), "lon": round(n_lon, 4), "tc": tc, "dist": dist, "alt": alt_sel, "elev": get_elevation(n_lat, n_lon)})
+        n_lat, n_lon = calculate_destination(last["lat"], last["lon"], tc_in, dist_in)
+        st.session_state.waypoints.append({"name": f"WP{len(st.session_state.waypoints)}", "lat": round(n_lat, 4), "lon": round(n_lon, 4), "tc": tc_in, "dist": dist_in, "alt": alt_in, "elev": get_elevation(n_lat, n_lon)})
         st.rerun()
 
 with col_map:
     if st.session_state.waypoints:
         m = folium.Map(location=[st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"]], zoom_start=8)
-        folium.PolyLine([[w["lat"], w["lon"]] for w in st.session_state.waypoints], color="blue", weight=3).add_to(m)
+        folium.PolyLine([[w["lat"], w["lon"]] for w in st.session_state.waypoints], color="red").add_to(m)
         for w in st.session_state.waypoints: folium.Marker([w["lat"], w["lon"]], tooltip=w['name']).add_to(m)
-        st_folium(m, width="100%", height=350, key="v7_map")
-    else:
-        st.info("Entrez un point de départ.")
+        st_folium(m, width="100%", height=350, key="map_v8")
+    else: st.info("Initialisez un départ.")
 
-# OPTION RELIEF
+# RELIEF
 if show_relief and len(st.session_state.waypoints) > 1:
-    st.markdown("### 🏔️ Relief de la Navigation")
-    prof = [{"Point": w["name"], "Sol (ft)": round(w["elev"]*3.28), "Avion (ft)": w["alt"]} for w in st.session_state.waypoints]
+    prof = [{"Point": w["name"], "Sol": round(w["elev"]*3.28), "Avion": w["alt"]} for w in st.session_state.waypoints]
     st.area_chart(pd.DataFrame(prof).set_index("Point"), color=["#8B4513", "#0000FF"])
 
-# CALCULS ET OPTIMISATION
+# LOGIQUE DE CALCUL
 if len(st.session_state.waypoints) > 1:
     st.markdown("---")
-    st.subheader("📝 Log de Navigation")
-    
-    res = []
+    res_list = []
+    t_min, t_dist = 0, 0
     curr_t = datetime.utcnow()
     mv = get_magnetic_declination(st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"])
 
+    # --- OPTIMISATION GLOBALE ---
+    if optimize_global:
+        # Calcul de la route moyenne magnétique
+        avg_tc = sum(w.get("tc", 0) for w in st.session_state.waypoints[1:]) / (len(st.session_state.waypoints)-1)
+        avg_rm = (avg_tc - mv) % 360
+        levels = [3500, 5500, 7500, 9500] if 0 <= avg_rm < 180 else [2500, 4500, 6500, 8500]
+        
+        best_time = 9999
+        best_alt_global = 0
+        
+        for alt_test in levels:
+            total_time_test = 0
+            for i in range(1, len(st.session_state.waypoints)):
+                w = st.session_state.waypoints[i]
+                wd_t, ws_t = get_wind(w["lat"], w["lon"], alt_test, curr_t)
+                gs_t, _ = calculate_gs_and_wca(tas, w["tc"], wd_t, ws_t)
+                total_time_test += (w["dist"] / gs_t) * 60
+            if total_time_test < best_time:
+                best_time = total_time_test
+                best_alt_global = alt_test
+        
+        st.info(f"💡 **Altitude recommandée pour le trajet global : {best_alt_global} ft** (Temps estimé : {int(best_time)} min)")
+
+    # Génération du tableau
     for i in range(1, len(st.session_state.waypoints)):
         w1, w2 = st.session_state.waypoints[i-1], st.session_state.waypoints[i]
         wd, ws = get_wind(w2["lat"], w2["lon"], w2["alt"], curr_t)
         gs, wca = calculate_gs_and_wca(tas, w2["tc"], wd, ws)
         eet = (w2["dist"]/gs)*60
-        curr_t += timedelta(minutes=eet)
-        
-        # Logique Optimiseur
-        best_alt_info = ""
-        if optimize_alt:
-            # Règle semi-circulaire : RM (Route Magnétique) = TC - MV
-            rm = (w2["tc"] - mv) % 360
-            niveaux_vfr = []
-            if 0 <= rm < 180: # Impair + 500
-                niveaux_vfr = [3500, 5500, 7500, 9500]
-            else: # Pair + 500
-                niveaux_vfr = [2500, 4500, 6500, 8500]
-            
-            best_gs = 0
-            best_alt = w2["alt"]
-            for a in niveaux_vfr:
-                wd_test, ws_test = get_wind(w2["lat"], w2["lon"], a, curr_t)
-                gs_test, _ = calculate_gs_and_wca(tas, w2["tc"], wd_test, ws_test)
-                if gs_test > best_gs:
-                    best_gs = gs_test
-                    best_alt = a
-            
-            if best_alt != w2["alt"]:
-                gain = int(best_gs - gs)
-                if gain > 2: # On ne propose que si le gain est significatif
-                    best_alt_info = f"💡 Conseil : Montez à {best_alt}ft (Gain +{gain}kt GS)"
+        t_min += eet; t_dist += w2["dist"]; curr_t += timedelta(minutes=eet)
+        res_list.append({"Branche": f"{w1['name']}➔{w2['name']}", "Alt": f"{w2['alt']}ft", "Vent": f"{int(wd)}/{int(ws)}kt", "Cm": f"{int((w2['tc']-wca-mv)%360):03d}°", "GS": f"{int(gs)}kt", "EET": f"{int(eet):02d}:{int((eet%1)*60):02d}"})
 
-        res.append({
-            "Branche": f"{w1['name']}->{w2['name']}",
-            "Altitude": f"{w2['alt']} ft",
-            "Vent": f"{int(wd):03d}/{int(ws)}kt",
-            "Cm": f"{int((w2['tc']-wca-mv)%360):03d}°",
-            "GS": f"{int(gs)} kt",
-            "EET": f"{int(eet):02d}:{int((eet%1)*60):02d}",
-            "Optimisation": best_alt_info
-        })
-
-    df_res = pd.DataFrame(res)
-    st.table(df_res)
+    st.session_state.results = pd.DataFrame(res_list)
+    st.table(st.session_state.results)
+    
+    # FUEL & PDF
+    fuel_total = round((t_min/60)*conso + 10, 1) # +10L forfaitaire (roulage/montée)
+    info_text = f"**Total : {t_dist:.1f} NM | Temps : {int(t_min)} min | Carburant estimé : {fuel_total} L**"
+    st.success(info_text)
+    
+    if st.button("📥 Générer PDF", key="btn_pdf"):
+        pdf_bytes = create_pdf_simple(st.session_state.results, info_text)
+        st.download_button("Cliquez ici pour télécharger", bytes(pdf_bytes), "nav.pdf", "application/pdf")
