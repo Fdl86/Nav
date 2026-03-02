@@ -39,26 +39,12 @@ def calculate_destination(lat, lon, bearing, dist_nm):
     lat1, lon1 = math.radians(lat), math.radians(lon)
     lat2 = lat1 + (dist_nm/R) * math.cos(brng)
     dlat = lat2 - lat1
-    q = math.cos(lat1) if abs(dlat) < 1e-10 else dlat / math.log(math.tan(lat2/2 + math.pi/4)/math.tan(lat1/2 + math.pi/4))
+    if abs(dlat) < 1e-10:
+        q = math.cos(lat1)
+    else:
+        dphi = math.log(math.tan(lat2/2 + math.pi/4)/math.tan(lat1/2 + math.pi/4))
+        q = dlat / dphi
     lon2 = lon1 + (dist_nm/R) * math.sin(brng) / q
     return math.degrees(lat2), math.degrees(lon2)
 
-def create_pdf(df, total_info):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Helvetica", 'B', 16)
-    pdf.cell(0, 10, "LOG DE NAVIGATION AROME", align='C', new_x="LMARGIN", new_y="NEXT")
-    pdf.set_font("Helvetica", size=10)
-    pdf.ln(10)
-    cols = ["Branche", "Rv", "Vent", "Cm", "GS", "EET"]
-    for col in cols: pdf.cell(31, 10, col, border=1, align='C')
-    pdf.ln()
-    pdf.set_font("Helvetica", size=9)
-    for _, row in df.iterrows():
-        for col in cols:
-            txt = str(row[col]).replace("➔", "->")
-            pdf.cell(31, 10, txt, border=1, align='C')
-        pdf.ln()
-    pdf.ln(10); pdf.set_font("Helvetica", 'I', 11)
-    pdf.multi_cell(0, 10, total_info.replace("**", ""))
-    return bytes(
+def create_
