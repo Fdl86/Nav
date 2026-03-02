@@ -71,44 +71,42 @@ def create_pdf_simple(df, total_info):
     return pdf.output()
 
 # ─── INTERFACE STREAMLIT ───
-st.set_page_config(page_title="SkyAssistant V11", layout="wide")
+st.set_page_config(page_title="SkyAssistant V12", layout="wide")
 
 if 'waypoints' not in st.session_state: st.session_state.waypoints = []
 
 with st.sidebar:
     st.title("🛠️ Paramètres")
-    # Recherche dynamique de l'aéroport
-    oaci = st.text_input("🔍 Code OACI (ex: LFBI)", "", key="start_oaci").upper()
+    oaci = st.text_input("🔍 Code OACI Départ", "", key="start_oaci").upper()
     
     if oaci in AIRPORTS:
         st.success(f"📍 {AIRPORTS[oaci]['name']}")
-        if st.button("🚀 Utiliser cet aéroport", key="btn_init"):
+        if st.button("🚀 Initialiser le départ", key="btn_init"):
             ap = AIRPORTS[oaci]
             st.session_state.waypoints = [{"name": oaci, "lat": ap["lat"], "lon": ap["lon"], "elev": get_elevation(ap["lat"], ap["lon"]), "alt": 2500}]
             st.rerun()
-    elif len(oaci) == 4:
-        st.error("Code OACI inconnu")
     
     st.markdown("---")
-    tas = st.number_input("TAS (kt)", 50, 250, 100, key="cfg_tas")
-    conso = st.number_input("Conso (L/h)", 5, 100, 22, key="cfg_conso")
+    tas = st.number_input("Vitesse Propre (TAS) kt", 50, 250, 100, key="cfg_tas")
+    conso = st.number_input("Consommation (L/h)", 5, 100, 22, key="cfg_conso")
     
     st.markdown("---")
-    show_relief = st.checkbox("📊 Relief", False, key="chk_relief")
-    optimize_global = st.checkbox("💡 Optimiseur d'Altitude", True, key="chk_opt")
+    show_relief = st.checkbox("📊 Afficher Relief", False, key="chk_relief")
+    optimize_global = st.checkbox("💡 Optimiseur Altitude", True, key="chk_opt")
 
-    if st.button("🗑️ Reset Navigation", key="btn_reset"):
+    if st.button("🗑️ Tout effacer", key="btn_reset"):
         st.session_state.waypoints = []; st.rerun()
 
 col_map, col_ctrl = st.columns([2, 1])
 
 with col_ctrl:
-    st.subheader("📍 Segments")
+    # AJOUT DE SEGMENT
+    st.subheader("📍 Ajouter une branche")
     tc_in = st.number_input("Route Vraie (Rv) °", 0, 359, 0, key="in_tc")
     dist_in = st.number_input("Distance (NM)", 0.1, 100.0, 15.0, key="in_dist")
     alt_in = st.number_input("Altitude (ft)", 1000, 12500, 2500, step=500, key="in_alt")
     
-    if st.button("➕ Ajouter Branche", key="btn_add") and st.session_state.waypoints:
+    if st.button("➕ Ajouter", key="btn_add") and st.session_state.waypoints:
         last = st.session_state.waypoints[-1]
         n_lat, n_lon = calculate_destination(last["lat"], last["lon"], tc_in, dist_in)
         st.session_state.waypoints.append({
@@ -119,15 +117,33 @@ with col_ctrl:
         })
         st.rerun()
 
+    # SUPPRESSION DE BRANCHE (NOUVEAUTÉ)
+    if len(st.session_state.waypoints) > 1:
+        st.markdown("---")
+        st.subheader("⚙️ Modifier le trajet")
+        
+        # Bouton rapide : Supprimer le dernier
+        if st.button("⬅️ Supprimer la dernière branche", key="del_last"):
+            st.session_state.waypoints.pop()
+            st.rerun()
+        
+        # Sélection précise pour supprimer un point
+        wp_to_del = st.selectbox("Supprimer un point spécifique :", 
+                                [w["name"] for w in st.session_state.waypoints], 
+                                index=len(st.session_state.waypoints)-1)
+        if st.button("❌ Supprimer ce point"):
+            st.session_state.waypoints = [w for w in st.session_state.waypoints if w["name"] != wp_to_del]
+            st.rerun()
+
 with col_map:
     if st.session_state.waypoints:
         m = folium.Map(location=[st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"]], zoom_start=8)
         folium.PolyLine([[w["lat"], w["lon"]] for w in st.session_state.waypoints], color="red", weight=3).add_to(m)
         for w in st.session_state.waypoints: 
             folium.Marker([w["lat"], w["lon"]], tooltip=w['name']).add_to(m)
-        st_folium(m, width="100%", height=350, key="map_v11", returned_objects=[])
+        st_folium(m, width="100%", height=350, key="map_v12", returned_objects=[])
     else: 
-        st.info("Saisissez un OACI à gauche pour commencer votre plan de vol.")
+        st.info("Veuillez définir un point de départ.")
 
 # RELIEF
 if show_relief and len(st.session_state.waypoints) > 1:
@@ -140,49 +156,40 @@ if len(st.session_state.waypoints) > 1:
     curr_t = datetime.utcnow()
     mv = get_magnetic_declination(st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"])
 
-    # 1. OPTIMISATION FILTRÉE
     if optimize_global:
-        alt_prevue = st.session_state.waypoints[1]["alt"]
+        alt_p = st.session_state.waypoints[1]["alt"]
         avg_tc = sum(w.get("tc", 0) for w in st.session_state.waypoints[1:]) / (len(st.session_state.waypoints)-1)
         avg_rm = (avg_tc - mv) % 360
-        
         niveaux_vfr = [3500, 5500, 7500, 9500] if 0 <= avg_rm < 180 else [2500, 4500, 6500, 8500]
-        levels_to_scan = [l for l in niveaux_vfr if abs(l - alt_prevue) <= 2000]
+        levels_to_scan = [l for l in niveaux_vfr if abs(l - alt_p) <= 2000]
         
-        # GS à l'altitude prévue
         gs_prev_list = []
         for w in st.session_state.waypoints[1:]:
-            wd_p, ws_p = get_wind(w["lat"], w["lon"], alt_prevue, curr_t)
+            wd_p, ws_p = get_wind(w["lat"], w["lon"], alt_p, curr_t)
             gs_p, _ = calculate_gs_and_wca(tas, w["tc"], wd_p, ws_p)
             gs_prev_list.append(gs_p)
-        avg_gs_prevue = sum(gs_prev_list) / len(gs_prev_list)
+        avg_gs_p = sum(gs_prev_list) / len(gs_prev_list)
 
-        analysis_data, best_time, best_alt = [], 9999, 0
-        best_gain = 0
-
+        analysis_data, best_time, best_alt, best_gain = [], 9999, 0, 0
         for alt_t in levels_to_scan:
-            total_time, gs_list = 0, []
+            total_t, gs_l = 0, []
             for i in range(1, len(st.session_state.waypoints)):
                 w = st.session_state.waypoints[i]
                 wd_t, ws_t = get_wind(w["lat"], w["lon"], alt_t, curr_t)
                 gs_t, _ = calculate_gs_and_wca(tas, w["tc"], wd_t, ws_t)
-                total_time += (w["dist"] / gs_t) * 60
-                gs_list.append(gs_t)
-            
-            avg_gs_t = sum(gs_list) / len(gs_list)
-            gain = int(avg_gs_t - avg_gs_prevue)
+                total_t += (w["dist"] / gs_t) * 60
+                gs_l.append(gs_t)
+            avg_gs_t = sum(gs_l) / len(gs_l)
+            gain = int(avg_gs_t - avg_gs_p)
             analysis_data.append({"Altitude": f"{alt_t} ft", "GS Moy": f"{int(avg_gs_t)} kt", "Gain": f"{gain} kt"})
-            
-            if total_time < best_time:
-                best_time, best_alt, best_gain = total_time, alt_t, gain
+            if total_t < best_time: best_time, best_alt, best_gain = total_t, alt_t, gain
 
-        # CONDITION D'AFFICHAGE : Seulement si gain réel > 0
         if best_gain > 0:
             st.info(f"💡 **Conseil Altitude : {best_alt} ft** (Gain : +{best_gain} kt)")
             with st.expander("🧐 Détails de l'analyse"):
                 st.table(pd.DataFrame(analysis_data))
 
-    # 2. LOG FINAL
+    # LOG
     res_final, t_min, t_dist = [], 0, 0
     for i in range(1, len(st.session_state.waypoints)):
         w1, w2 = st.session_state.waypoints[i-1], st.session_state.waypoints[i]
@@ -201,4 +208,4 @@ if len(st.session_state.waypoints) > 1:
     
     if st.button("📥 Générer PDF", key="btn_pdf"):
         pdf_bytes = create_pdf_simple(pd.DataFrame(res_final), info_text)
-        st.download_button("Télécharger", bytes(pdf_bytes), "navigation.pdf", "application/pdf")
+        st.download_button("Télécharger", bytes(pdf_bytes), "nav.pdf", "application/pdf")
