@@ -6,7 +6,6 @@ import math
 
 # ─── CONFIG ───────────────────────────────────────────────────────────────
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
-PRESSURE_LEVELS = [1000, 975, 950, 925, 900, 850, 800, 700, 600, 500]
 
 @st.cache_data(ttl=86400)
 def load_airports():
@@ -22,28 +21,18 @@ def get_magnetic_declination(lat, lon):
     return round(-1.2 - (lon * 0.35) + (lat * 0.05), 1)
 
 def calculate_destination(lat, lon, bearing, dist_nm):
-    """Calcule la position suivante (formule rhumb line)"""
-    R = 3440.065  # rayon Terre en NM
+    R = 3440.065
     d = dist_nm / R
     bearing = math.radians(bearing)
     lat1 = math.radians(lat)
     lon1 = math.radians(lon)
-    
     lat2 = lat1 + d * math.cos(bearing)
     dlon = math.atan2(math.sin(bearing) * math.sin(d) * math.cos(lat1),
                       math.cos(d) - math.sin(lat1) * math.sin(lat2))
     lon2 = lon1 + dlon
     return math.degrees(lat2), math.degrees(lon2) % 360
 
-def get_nearest_pressure_level(alt_ft):
-    alt_m = alt_ft * 0.3048
-    if alt_m < 11000:
-        p = 1013.25 * (1 - 0.0065 * alt_m / 288.15)**5.255
-    else:
-        p = 226.32 * math.exp(-0.000157688 * (alt_m - 11000))
-    return min(PRESSURE_LEVELS, key=lambda h: abs(h - p))
-
-st.title("Prépa Vol – AROME France (vent par point tournant)")
+st.title("Prépa Vol – AROME 2.5 km pur (vent par segment)")
 
 # SAISIE GLOBALE
 airport_options = [f"{code} - {data['name']}" for code, data in sorted(AIRPORTS.items())]
@@ -58,7 +47,7 @@ else:
     lat = AIRPORTS[selected_code]["lat"]
     lon = AIRPORTS[selected_code]["lon"]
 
-st.success(f"✅ {selected_code} chargé – Modèle **AROME France** activé")
+st.success(f"✅ {selected_code} chargé – **AROME 2.5 km** activé (même modèle que Windy)")
 
 mag_var = get_magnetic_declination(lat, lon)
 st.info(f"Variation magnétique auto : **{mag_var:+.1f}°**")
@@ -69,11 +58,11 @@ alt_default = st.number_input("Altitude par défaut (ft)", 1000, 18000, 2300, st
 depart_time = datetime.utcnow()
 st.info(f"Heure de calcul (UTC now) : **{depart_time.strftime('%Y-%m-%d %H:%M:%S')}**")
 
-# GESTION DES SEGMENTS + POSITIONS
+# SEGMENTS + POSITIONS RÉELLES
 if 'waypoints' not in st.session_state:
     st.session_state.waypoints = [{"name": selected_code, "lat": lat, "lon": lon}]
 
-st.subheader("Ajout segments (Cap Vrai + Distance)")
+st.subheader("Ajout segments")
 col1, col2, col3 = st.columns([2,2,2])
 with col1: tc = st.number_input("Cap Vrai (°)", 0, 359, 0, step=1)
 with col2: dist = st.number_input("Distance (NM)", 1.0, 500.0, 50.0, step=1.0)
@@ -92,12 +81,12 @@ if st.button("Ajouter segment"):
     })
     st.rerun()
 
-# Affichage waypoints
-st.write("**Waypoints calculés** (position réelle) :")
+# Affichage positions
+st.write("**Waypoints réels calculés** :")
 for i, wp in enumerate(st.session_state.waypoints):
     st.write(f"{i}: **{wp['name']}** → {wp['lat']:.4f}°, {wp['lon']:.4f}°")
 
-if len(st.session_state.waypoints) > 1 and st.button("Supprimer dernier segment"):
+if len(st.session_state.waypoints) > 1 and st.button("Supprimer dernier"):
     st.session_state.waypoints.pop()
     st.rerun()
 
@@ -115,17 +104,15 @@ if st.button("Calculer la route") and len(st.session_state.waypoints) > 1:
         dist = end.get("dist", 0)
         alt_ft = end.get("alt", alt_default)
 
-        # Midpoint du segment pour vent AROME
         mid_lat = (start["lat"] + end["lat"]) / 2
         mid_lon = (start["lon"] + end["lon"]) / 2
-
-        level = get_nearest_pressure_level(alt_ft)
 
         params = {
             "latitude": mid_lat,
             "longitude": mid_lon,
-            "hourly": f"wind_speed_{level}hPa,wind_direction_{level}hPa",
-            "models": "meteofrance_seamless",   # ← AROME France activé !
+            "hourly": "wind_speed_925hPa,wind_direction_925hPa",  # ~2300-2500 ft
+            "models": "meteofrance_arome",          # ← PUR AROME 2.5 km
+            "wind_speed_unit": "knots",             # ← déjà en nœuds (zéro erreur conversion)
             "timezone": "UTC",
             "forecast_days": 2
         }
@@ -134,10 +121,10 @@ if st.button("Calculer la route") and len(st.session_state.waypoints) > 1:
         times = resp["hourly"]["time"]
         idx = min(range(len(times)), key=lambda k: abs(datetime.fromisoformat(times[k].replace('Z','+00:00')) - current_time))
 
-        wind_kt = resp["hourly"][f"wind_speed_{level}hPa"][idx] * 1.94384
-        wind_dir = resp["hourly"][f"wind_direction_{level}hPa"][idx]
+        wind_kt = resp["hourly"]["wind_speed_925hPa"][idx]   # déjà en knots !
+        wind_dir = resp["hourly"]["wind_direction_925hPa"][idx]
 
-        # Calcul dérive classique
+        # Calcul dérive
         wind_angle = (wind_dir - tc + 180) % 360 - 180
         cross = wind_kt * math.sin(math.radians(wind_angle))
         head = wind_kt * math.cos(math.radians(wind_angle))
@@ -164,13 +151,14 @@ if st.button("Calculer la route") and len(st.session_state.waypoints) > 1:
         })
         total_dist += dist
 
-    st.subheader("Résultats AROME")
+    st.subheader("Résultats AROME 2.5 km")
     st.table(results)
     st.success(f"**Total** : {total_dist:.0f} NM – {total_min:.0f} min – ETA {current_time.strftime('%H:%M UTC')}")
 
-    with st.expander("Debug (pour vérifier AROME)"):
-        st.write(f"Midpoint utilisé pour dernier segment : {mid_lat:.4f}°, {mid_lon:.4f}°")
-        st.write(f"Niveau pression : {level} hPa")
-        st.caption("Modèle forcé : meteofrance_seamless (AROME 1.5-2.5 km) → devrait coller à Windy AROME")
+    with st.expander("Debug AROME"):
+        st.write(f"Midpoint dernier segment : {mid_lat:.4f}°, {mid_lon:.4f}°")
+        st.write(f"Vitesse renvoyée directement en knots : {wind_kt:.1f} kt")
+        st.caption("Modèle forcé : meteofrance_arome (exactement celui de Windy AROME 2.5 km)")
+
 else:
-    st.info("Ajoute au moins un segment pour voir le calcul avec vent par zone")
+    st.info("Ajoute au moins un segment")
