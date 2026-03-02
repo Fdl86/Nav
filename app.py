@@ -129,28 +129,48 @@ if len(st.session_state.waypoints) > 1:
     curr_t = datetime.utcnow()
     mv = get_magnetic_declination(st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"])
 
-    # --- OPTIMISATION GLOBALE ---
-    if optimize_global:
-        # Calcul de la route moyenne magnétique
-        avg_tc = sum(w.get("tc", 0) for w in st.session_state.waypoints[1:]) / (len(st.session_state.waypoints)-1)
-        avg_rm = (avg_tc - mv) % 360
-        levels = [3500, 5500, 7500, 9500] if 0 <= avg_rm < 180 else [2500, 4500, 6500, 8500]
+    # --- OPTIMISATION GLOBALE AVEC JUSTIFICATION ---
+if optimize_global:
+    # 1. Détermination des niveaux selon la règle semi-circulaire
+    avg_tc = sum(w.get("tc", 0) for w in st.session_state.waypoints[1:]) / (len(st.session_state.waypoints)-1)
+    avg_rm = (avg_tc - mv) % 360
+    levels = [3500, 5500, 7500, 9500] if 0 <= avg_rm < 180 else [2500, 4500, 6500, 8500]
+    
+    analysis_data = []
+    best_time = 9999
+    best_alt_global = 0
+    
+    # 2. Scan de chaque niveau
+    for alt_test in levels:
+        total_time_test = 0
+        gs_list = []
+        for i in range(1, len(st.session_state.waypoints)):
+            w = st.session_state.waypoints[i]
+            wd_t, ws_t = get_wind(w["lat"], w["lon"], alt_test, curr_t)
+            gs_t, _ = calculate_gs_and_wca(tas, w["tc"], wd_t, ws_t)
+            total_time_test += (w["dist"] / gs_t) * 60
+            gs_list.append(gs_t)
         
-        best_time = 9999
-        best_alt_global = 0
+        avg_gs_at_alt = sum(gs_list) / len(gs_list)
+        analysis_data.append({"Altitude": f"{alt_test} ft", "GS Moyenne": f"{int(avg_gs_at_alt)} kt", "Temps Total": f"{int(total_time_test)} min"})
         
-        for alt_test in levels:
-            total_time_test = 0
-            for i in range(1, len(st.session_state.waypoints)):
-                w = st.session_state.waypoints[i]
-                wd_t, ws_t = get_wind(w["lat"], w["lon"], alt_test, curr_t)
-                gs_t, _ = calculate_gs_and_wca(tas, w["tc"], wd_t, ws_t)
-                total_time_test += (w["dist"] / gs_t) * 60
-            if total_time_test < best_time:
-                best_time = total_time_test
-                best_alt_global = alt_test
+        if total_time_test < best_time:
+            best_time = total_time_test
+            best_alt_global = alt_test
+
+    # 3. Affichage des résultats et justifications
+    st.info(f"💡 **Altitude recommandée : {best_alt_global} ft**")
+    
+    with st.expander("🧐 Voir les justifications du vent"):
+        st.write("Voici la comparaison des performances selon l'altitude (Règle semi-circulaire) :")
+        st.table(pd.DataFrame(analysis_data))
         
-        st.info(f"💡 **Altitude recommandée pour le trajet global : {best_alt_global} ft** (Temps estimé : {int(best_time)} min)")
+        st.write("**Détails des vents à l'altitude recommandée :**")
+        for i in range(1, len(st.session_state.waypoints)):
+            w1, w2 = st.session_state.waypoints[i-1], st.session_state.waypoints[i]
+            wd_opt, ws_opt = get_wind(w2["lat"], w2["lon"], best_alt_global, curr_t)
+            gs_opt, _ = calculate_gs_and_wca(tas, w2["tc"], wd_opt, ws_opt)
+            st.write(f"- **{w1['name']} ➔ {w2['name']}** : Vent {int(wd_opt)}°/{int(ws_opt)}kt (GS {int(gs_opt)}kt)")
 
     # Génération du tableau
     for i in range(1, len(st.session_state.waypoints)):
