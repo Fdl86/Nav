@@ -166,19 +166,25 @@ if st.button("🚀 CALCULER LE LOG DE NAV", type="primary") and len(st.session_s
             gs = max(gs, 10.0) # Sécurité vent de face extrême
             
             t_h = dist / gs
-            t_min = t_h * 60
-            total_min += t_min
+            t_min_total = t_h * 60
+        
+            # Conversion en minutes:secondes
+            mins = int(t_min_total)
+            secs = int((t_min_total - mins) * 60)
+            time_str = f"{mins:02d}:{secs:02d}" # Format mm:ss
+        
+            total_min += t_min_total
             total_dist += dist
-            current_time += timedelta(minutes=t_min)
+            current_time += timedelta(minutes=t_min_total)
 
-            results.append({
-                "Segment": f"{start['name']}→{end['name']}",
-                "Alt": f"{alt_ft}ft",
-                "Vent (AROME)": f"{int(wind_dir):03d}° / {wind_kt:.0f}kt",
-                "Dérive": f"{wca_deg:+.1f}°",
-                "Cm (Cap)": f"{int(cm):03d}°", # Correction ici
-                "GS": f"{gs:.0f}kt",
-                "Temps": f"{t_min:.1f} min"
+        results.append({
+            "Segment": f"{start['name']}→{end['name']}",
+            "Alt": f"{alt_ft}ft",
+            "Vent (AROME)": f"{int(wind_dir):03d}° / {wind_kt:.0f}kt",
+            "Dérive": f"{wca_deg:+.1f}°",
+            "Cm (Cap)": f"{int(cm):03d}°",
+            "GS": f"{gs:.0f}kt",
+            "Temps": time_str  # Utilisation du nouveau format
             })
         except Exception as e:
             st.error(f"Erreur API sur le segment {i} : {e}")
