@@ -122,11 +122,25 @@ if len(st.session_state.waypoints) > 1:
     mv = get_magnetic_declination(st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"])
 
     # --- OPTIMISATION GLOBALE AVEC JUSTIFICATION ---
+    # --- OPTIMISATION GLOBALE FILTRÉE (+/- 2000ft) ---
     if optimize_global:
+        # 1. On prend l'altitude du premier segment comme référence
+        alt_reference = st.session_state.waypoints[1]["alt"]
+        
+        # 2. Détermination des niveaux selon la règle semi-circulaire
         avg_tc = sum(w.get("tc", 0) for w in st.session_state.waypoints[1:]) / (len(st.session_state.waypoints)-1)
         avg_rm = (avg_tc - mv) % 360
-        levels = [3500, 5500, 7500, 9500] if 0 <= avg_rm < 180 else [2500, 4500, 6500, 8500]
         
+        # Tous les niveaux théoriques
+        all_levels = [3500, 5500, 7500, 9500, 11500] if 0 <= avg_rm < 180 else [2500, 4500, 6500, 8500, 10500]
+        
+        # FILTRE : On ne garde que ceux à +/- 2000ft de l'altitude prévue
+        levels = [l for l in all_levels if abs(l - alt_reference) <= 2000]
+        
+        # Si aucun niveau ne rentre dans le filtre (ex: prévu 1500ft), on force au moins le premier niveau VFR
+        if not levels:
+            levels = [all_levels[0]]
+
         analysis_data, best_time, best_alt = [], 9999, 0
         
         for alt_t in levels:
@@ -137,20 +151,20 @@ if len(st.session_state.waypoints) > 1:
                 gs_t, _ = calculate_gs_and_wca(tas, w["tc"], wd_t, ws_t)
                 total_time += (w["dist"] / gs_t) * 60
                 gs_list.append(gs_t)
+            
             avg_gs = sum(gs_list) / len(gs_list)
-            analysis_data.append({"Altitude": f"{alt_t} ft", "GS Moy": f"{int(avg_gs)} kt", "Temps": f"{int(total_time)} min"})
+            diff_gs = int(avg_gs - (sum([(w["dist"]/((tas*math.cos(math.asin((get_wind(w["lat"],w["lon"],alt_reference,curr_t)[1]/tas)*math.sin(math.radians(get_wind(w["lat"],w["lon"],alt_reference,curr_t)[0]-w["tc"])))))-(get_wind(w["lat"],w["lon"],alt_reference,curr_t)[1]*math.cos(math.radians(get_wind(w["lat"],w["lon"],alt_reference,curr_t)[0]-w["tc"]))))) for w in st.session_state.waypoints[1:]]) / (len(st.session_state.waypoints)-1)))
+            
+            analysis_data.append({
+                "Altitude": f"{alt_t} ft", 
+                "GS Moy": f"{int(avg_gs)} kt", 
+                "Temps": f"{int(total_time)} min"
+            })
+            
             if total_time < best_time:
                 best_time, best_alt = total_time, alt_t
         
-        st.info(f"💡 **Altitude recommandée : {best_alt} ft**")
-        with st.expander("🧐 Voir les justifications (Vents & GS Moyenne)"):
-            st.table(pd.DataFrame(analysis_data))
-            st.write("**Détails par segment à l'altitude recommandée :**")
-            for i in range(1, len(st.session_state.waypoints)):
-                w1, w2 = st.session_state.waypoints[i-1], st.session_state.waypoints[i]
-                wd_o, ws_o = get_wind(w2["lat"], w2["lon"], best_alt, curr_t)
-                gs_o, _ = calculate_gs_and_wca(tas, w2["tc"], wd_o, ws_o)
-                st.write(f"- {w1['name']} ➔ {w2['name']} : Vent {int(wd_o)}°/{int(ws_o)}kt | GS {int(gs_o)}kt")
+        st.info(f"💡 **Altitude recommandée (proche de votre altitude prévue) : {best_alt} ft**")
 
     # --- LOG DE NAVIGATION ---
     res_list, t_min, t_dist = [], 0, 0
