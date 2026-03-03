@@ -6,7 +6,7 @@ import math
 import folium
 from streamlit_folium import st_folium
 import plotly.graph_objects as go
-from fpdf import FPDF
+from fpdf import FPDF, Enums
 from fpdf.enums import XPos, YPos
 import base64
 
@@ -60,20 +60,23 @@ def create_pdf(df_nav, metar_text):
     pdf = FPDF(orientation='P', unit='mm', format='A4')
     pdf.add_page()
     
+    # En-tête
     pdf.set_font("helvetica", 'B', 16)
-    # Remplacement de ln=True par les nouvelles constantes pour éviter les Warnings
     pdf.cell(0, 10, "LOG DE NAVIGATION - SKYASSISTANT", 
-             new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
+             new_x=Enums.XPos.LMARGIN, new_y=Enums.YPos.NEXT, align='C')
     pdf.ln(5)
     
+    # Section METAR
     pdf.set_font("helvetica", 'B', 10)
-    pdf.cell(0, 8, "METAR DE DEPART :", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(0, 8, "METAR DE DEPART :", new_x=Enums.XPos.LMARGIN, new_y=Enums.YPos.NEXT)
     
     pdf.set_font("helvetica", size=9)
+    # On force l'encodage pour éviter tout plantage sur les caractères spéciaux
     clean_metar = metar_text.encode('ascii', 'ignore').decode('ascii')
     pdf.multi_cell(0, 6, clean_metar, border=1)
     pdf.ln(10)
     
+    # Header Tableau
     pdf.set_font("helvetica", 'B', 9)
     pdf.set_fill_color(220, 220, 220)
     
@@ -84,8 +87,10 @@ def create_pdf(df_nav, metar_text):
         pdf.cell(w[i], 10, cols[i], border=1, fill=True, align='C')
     pdf.ln()
     
+    # Lignes du tableau
     pdf.set_font("helvetica", size=9)
     for _, row in df_nav.iterrows():
+        # Nettoyage ASCII pour chaque cellule
         txt_br = str(row['Branche']).replace('➔', '->').encode('ascii', 'ignore').decode('ascii')
         txt_v = str(row['Vent']).encode('ascii', 'ignore').decode('ascii')
         txt_gs = str(row['GS']).encode('ascii', 'ignore').decode('ascii')
@@ -99,7 +104,7 @@ def create_pdf(df_nav, metar_text):
         pdf.cell(w[4], 10, txt_tt, border=1)
         pdf.ln()
 
-    # CRUCIAL : On transforme le bytearray en bytes pour Streamlit
+    # Transformation explicite en bytes pour Streamlit
     return bytes(pdf.output())
 
 # ─── INTERFACE ───
@@ -157,7 +162,7 @@ with col_map:
 # ─── LOG & PROFIL AVEC PALIERS ───
 if len(st.session_state.waypoints) > 1:
     st.markdown("---")
-    curr_t = datetime.now(datetime.UTC)
+    curr_t = datetime.datetime.now(datetime.timezone.utc)
     nav_rows, dist_p, alt_p, terr_p = [], [0], [], [st.session_state.waypoints[0]["elev"]]
     alt_p.append(st.session_state.waypoints[0]["elev"])
 
