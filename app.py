@@ -6,17 +6,17 @@ import math
 import folium
 from streamlit_folium import st_folium
 
-# ─── CONFIGURATION DES SOURCES ───
+# ─── CONFIGURATION ───
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
 ELEVATION_URL = "https://api.open-meteo.com/v1/elevation"
 
-# Mapping pour coller aux couches de pression AROME (1 hPa ≈ 28 ft)
+# Mapping pression (1 hPa ≈ 28 ft)
 PRESSURE_MAP = {
     1000: 975, 1500: 960, 2000: 950, 2500: 925, 3000: 900, 
     3500: 885, 4500: 865, 5000: 850, 5500: 835, 7500: 775, 9500: 725
 }
 
-@st.cache_data(ttl=3600) # Rafraîchissement toutes les heures
+@st.cache_data(ttl=3600)
 def load_airports():
     try:
         df = pd.read_csv("https://ourairports.com/data/airports.csv", usecols=['ident','name','latitude_deg','longitude_deg','iso_country','type'])
@@ -26,42 +26,47 @@ def load_airports():
 
 AIRPORTS = load_airports()
 
-# ─── MOTEUR MÉTÉO À DOUBLE SOURCE ───
-def get_wind_optimized(lat, lon, alt_ft, time_dt):
+# ─── MOTEUR V20 : SÉLECTEUR DE MODÈLE HD ───
+def get_wind_v20(lat, lon, alt_ft, time_dt):
     target = min(PRESSURE_MAP.keys(), key=lambda x: abs(x - alt_ft))
     lv = PRESSURE_MAP[target]
     
-    # 1. Tentative AROME HD (Source Windy)
+    # On interroge AROME (Windy) et ICON-D2 (Actualisation rapide)
     params = {
         "latitude": lat, "longitude": lon,
         "hourly": f"wind_speed_{lv}hPa,wind_direction_{lv}hPa",
-        "models": "meteofrance_arome_france_hd",
-        "wind_speed_unit": "kn", "timezone": "UTC"
+        "models": "meteofrance_arome_france_hd,icon_d2",
+        "wind_speed_unit": "kn", "timezone": "UTC", "forecast_days": 1
     }
     
     try:
         r = requests.get(OPEN_METEO_URL, params=params).json()
+        h = r.get("hourly", {})
         
-        # 2. Vérification de la donnée et Fallback si "null"
-        if "hourly" not in r or r["hourly"][f"wind_speed_{lv}hPa"][0] is None:
-            params["models"] = "meteofrance_seamless"
-            r = requests.get(OPEN_METEO_URL, params=params).json()
-            source = "Seamless (Global)"
-        else:
-            source = "AROME HD (2.5km)"
-            
-        # Extraction de la fraîcheur (Heure du premier point du Run)
-        run_time = r.get("hourly", {}).get("time", ["Inconnue"])[0]
-        
-        idx = min(range(len(r["hourly"]["time"])), key=lambda k: abs(datetime.fromisoformat(r["hourly"]["time"][k]) - time_dt))
-        wd = r["hourly"][f"wind_direction_{lv}hPa"][idx]
-        ws = r["hourly"][f"wind_speed_{lv}hPa"][idx]
-        
-        return wd, ws, run_time, source
-    except:
-        return 0, 0, "Erreur API", "N/A"
+        # Clés spécifiques aux modèles
+        key_ws_arome = f"wind_speed_{lv}hPa_meteofrance_arome_france_hd"
+        key_wd_arome = f"wind_direction_{lv}hPa_meteofrance_arome_france_hd"
+        key_ws_icon = f"wind_speed_{lv}hPa_icon_d2"
+        key_wd_icon = f"wind_direction_{lv}hPa_icon_d2"
 
-# ─── CALCULS AÉRO ───
+        # Priorité : AROME si dispo et non nul, sinon ICON-D2
+        if key_ws_arome in h and h[key_ws_arome][0] is not None:
+            ws_list, wd_list = h[key_ws_arome], h[key_wd_arome]
+            source = "AROME HD"
+        elif key_ws_icon in h and h[key_ws_icon][0] is not None:
+            ws_list, wd_list = h[key_ws_icon], h[key_wd_icon]
+            source = "ICON-D2 (Frais)"
+        else:
+            return 0, 0, "N/A", "Aucun modèle HD"
+
+        run_time = h.get("time", ["N/A"])[0]
+        idx = min(range(len(h["time"])), key=lambda k: abs(datetime.fromisoformat(h["time"][k]) - time_dt))
+        
+        return wd_list[idx], ws_list[idx], run_time, source
+    except:
+        return 0, 0, "Erreur", "N/A"
+
+# ─── LOGIQUE GÉO ───
 def calculate_gs_and_wca(tas, tc, wd, ws):
     if wd is None or ws is None: return tas, 0
     wa = math.radians(wd - tc)
@@ -80,31 +85,28 @@ def calculate_destination(lat, lon, bearing, dist_nm):
     return math.degrees(la2), math.degrees(lo2)
 
 # ─── INTERFACE ───
-st.set_page_config(page_title="SkyAssistant V19", layout="wide")
-
+st.set_page_config(page_title="SkyAssistant V20", layout="wide")
 if 'waypoints' not in st.session_state: st.session_state.waypoints = []
 
 with st.sidebar:
-    st.header("🛫 Départ")
-    oaci = st.text_input("Code OACI", "", key="oaci_main").upper()
+    st.title("🛠️ Nav Control")
+    oaci = st.text_input("Code OACI Départ", "").upper()
     if oaci in AIRPORTS:
         st.success(f"📍 {AIRPORTS[oaci]['name']}")
-        if st.button("Initialiser"):
+        if st.button("🚀 Initialiser"):
             st.session_state.waypoints = [{"name": oaci, "lat": AIRPORTS[oaci]["lat"], "lon": AIRPORTS[oaci]["lon"], "alt": 2500}]
             st.rerun()
     
-    st.header("⚙️ Performance")
-    tas = st.number_input("TAS (Vitesse Propre) kt", 50, 250, 100)
+    st.markdown("---")
+    tas = st.number_input("TAS (kt)", 50, 250, 100)
     conso = st.number_input("Conso (L/h)", 5, 100, 22)
-    
-    if st.button("🗑️ Reset Complet"):
-        st.session_state.waypoints = []
-        st.rerun()
+    if st.button("🗑️ Reset Plan de Vol"):
+        st.session_state.waypoints = []; st.rerun()
 
 col_map, col_ctrl = st.columns([2, 1])
 
 with col_ctrl:
-    st.subheader("📍 Nouvelle Branche")
+    st.subheader("📍 Segments")
     tc_in = st.number_input("Route Vraie (Rv) °", 0, 359, 0)
     dist_in = st.number_input("Distance (NM)", 0.1, 100.0, 15.0)
     alt_in = st.number_input("Altitude (ft)", 1000, 12500, 2500, step=500)
@@ -124,26 +126,24 @@ with col_ctrl:
 with col_map:
     if st.session_state.waypoints:
         m = folium.Map(location=[st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"]], zoom_start=8)
-        folium.PolyLine([[w["lat"], w["lon"]] for w in st.session_state.waypoints], color="blue", weight=3).add_to(m)
-        for w in st.session_state.waypoints: folium.Marker([w["lat"], w["lon"]], tooltip=w['name']).add_to(m)
-        st_folium(m, width="100%", height=350, key="map_v19")
-    else: st.info("Saisissez un départ (ex: LFBI) à gauche.")
+        folium.PolyLine([[w["lat"], w["lon"]] for w in st.session_state.waypoints], color="red", weight=3).add_to(m)
+        st_folium(m, width="100%", height=350, key="map_v20")
+    else: st.info("Saisissez un départ.")
 
-# ─── LOG DE NAV DÉTAILLÉ ───
+# ─── AFFICHAGE LOG ───
 if len(st.session_state.waypoints) > 1:
     st.markdown("---")
     curr_t = datetime.utcnow()
     mv = round(-1.2 - (st.session_state.waypoints[0]["lon"] * 0.35) + (st.session_state.waypoints[0]["lat"] * 0.05), 1)
     
     rows = []
-    total_min, total_dist = 0, 0
-    
+    t_min, t_dist = 0, 0
     for i in range(1, len(st.session_state.waypoints)):
         w1, w2 = st.session_state.waypoints[i-1], st.session_state.waypoints[i]
-        wd, ws, run, src = get_wind_optimized(w2["lat"], w2["lon"], w2["alt"], curr_t)
+        wd, ws, run, src = get_wind_v20(w2["lat"], w2["lon"], w2["alt"], curr_t)
         gs, wca = calculate_gs_and_wca(tas, w2["tc"], wd, ws)
         eet = (w2["dist"]/gs)*60
-        total_min += eet; total_dist += w2["dist"]
+        t_min += eet; t_dist += w2["dist"]
         
         rows.append({
             "Branche": f"{w1['name']}➔{w2['name']}",
@@ -151,12 +151,10 @@ if len(st.session_state.waypoints) > 1:
             "Cm": f"{int((w2['tc']-wca-mv)%360):03d}°",
             "GS": f"{int(gs)}kt",
             "EET": f"{int(eet):02d}:{int((eet%1)*60):02d}",
-            "Fraîcheur (Run)": run,
+            "Run": run,
             "Modèle": src
         })
 
-    st.subheader("📋 Log de Navigation & Diagnostic Météo")
+    st.subheader("📋 Log de Navigation V20")
     st.table(pd.DataFrame(rows))
-    
-    fuel = round((total_min/60)*conso + 10, 1)
-    st.success(f"**Distance : {total_dist:.1f} NM | Temps : {int(total_min)} min | Carburant (+10L) : {fuel} L**")
+    st.success(f"**Total : {t_dist:.1f} NM | {int(t_min)} min | Fuel (+10L) : {round((t_min/60)*conso + 10, 1)} L**")
