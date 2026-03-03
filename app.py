@@ -80,11 +80,11 @@ def create_pdf(df_nav, metar_text):
     return bytes(pdf.output())
 
 # ─── INTERFACE ───
-st.set_page_config(page_title="SkyAssistant V32", layout="wide")
+st.set_page_config(page_title="SkyAssistant V33", layout="wide")
 if 'waypoints' not in st.session_state: st.session_state.waypoints = []
 
 with st.sidebar:
-    st.title("✈️ SkyAssistant V32")
+    st.title("✈️ SkyAssistant V33")
     search = st.text_input("🔍 Rechercher OACI", "").upper()
     sugg = [k for k in AIRPORTS.keys() if k.startswith(search)] if search else []
     if sugg and st.button(f"Départ : {sugg[0]}"):
@@ -122,7 +122,8 @@ with col_map:
     if st.session_state.waypoints:
         m = folium.Map(location=[st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"]], zoom_start=9)
         folium.PolyLine([[w["lat"], w["lon"]] for w in st.session_state.waypoints], color="red", weight=3).add_to(m)
-        st_folium(m, width="100%", height=350, key="map_v32")
+        # FLUIDITÉ : Ajout de returning_objects=[] pour stopper les rechargements sur mouvement de carte
+        st_folium(m, width="100%", height=350, key="map_v33", returning_objects=[])
 
 # ─── LOG DE NAVIGATION & PROFIL ───
 if len(st.session_state.waypoints) > 1:
@@ -153,7 +154,6 @@ if len(st.session_state.waypoints) > 1:
             t_desc_s = ((alt_croisiere - alt_target) / v_descent) * 60 if alt_croisiere > alt_target else 0
             dist_desc = (gs * (t_desc_s/3600))
 
-        # Construction chaine TOC/TOD
         toc_tod_str = ""
         if dist_climb > 0.1:
             t_str = f"{int(t_climb_s//60):02d}:{int(t_climb_s%60):02d}"
@@ -170,34 +170,25 @@ if len(st.session_state.waypoints) > 1:
                 x_tod = d_total + (w2["dist"] - dist_desc)
                 dist_p.append(x_tod); alt_p.append(alt_croisiere); terr_p.append(w2["elev"])
                 fig.add_annotation(x=x_tod, y=alt_croisiere, text=f"TOD ({t_str})", showarrow=True)
+                # On marque le palier d'intégration (1000ft AAL)
                 dist_p.append(d_total + w2["dist"]); alt_p.append(alt_target)
 
         d_total += w2["dist"]
-        if not (i == len(st.session_state.waypoints) - 1): 
-            dist_p.append(d_total); alt_p.append(alt_croisiere); terr_p.append(w2["elev"])
-        else: 
+        
+        # Tracé profil
+        if i == len(st.session_state.waypoints) - 1:
+            # Point final au sol
             dist_p.append(d_total); alt_p.append(w2["elev"]); terr_p.append(w2["elev"])
+            # LIGNE VERTICALE TERRAIN (ORANGE POINTILLÉ)
+            fig.add_vline(x=d_total, line_width=2, line_dash="dash", line_color="orange", annotation_text="Vertivale Terrain")
+        else:
+            dist_p.append(d_total); alt_p.append(alt_croisiere); terr_p.append(w2["elev"])
         
         nav_data.append({"Branche": f"{w1['name']}➔{w2['name']}", "Vent": f"{int(wd)}/{int(ws)}kt", "Source": src, "GS": f"{int(gs)}kt", "EET": eet_str, "TOC/TOD": toc_tod_str.strip(), "Suppr": False, "_idx": i})
 
     st.subheader("📋 Log de Navigation")
     df_nav = pd.DataFrame(nav_data)
-    
-    # Configuration de l'éditeur : SEULE LA BRANCHE EST ÉDITABLE
-    edited_log = st.data_editor(
-        df_nav, 
-        column_config={
-            "Branche": st.column_config.TextColumn("Branche", width="medium"),
-            "Vent": st.column_config.TextColumn("Vent", disabled=True),
-            "Source": st.column_config.TextColumn("Source", disabled=True),
-            "GS": st.column_config.TextColumn("GS", disabled=True),
-            "EET": st.column_config.TextColumn("EET", disabled=True),
-            "TOC/TOD": st.column_config.TextColumn("TOC/TOD", width="large", disabled=True),
-            "Suppr": st.column_config.CheckboxColumn("❌", width="small"),
-            "_idx": None
-        }, 
-        hide_index=True
-    )
+    edited_log = st.data_editor(df_nav, column_config={"Branche": st.column_config.TextColumn("Branche", width="medium"), "Vent": st.column_config.TextColumn("Vent", disabled=True), "Source": st.column_config.TextColumn("Source", disabled=True), "GS": st.column_config.TextColumn("GS", disabled=True), "EET": st.column_config.TextColumn("EET", disabled=True), "TOC/TOD": st.column_config.TextColumn("TOC/TOD", width="large", disabled=True), "Suppr": st.column_config.CheckboxColumn("❌", width="small"), "_idx": None}, hide_index=True)
 
     if not edited_log.equals(df_nav):
         new_wps = [st.session_state.waypoints[0]]
