@@ -120,31 +120,38 @@ with col_ctrl:
 
 with col_map:
     if st.session_state.waypoints:
-        # Initialisation de la carte sur le premier point
+        # Centrage de la carte
         m = folium.Map(location=[st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"]], zoom_start=9)
         
-        # Tracé de la ligne de navigation
+        # Tracé du trait (le "trait de nav")
         folium.PolyLine([[w["lat"], w["lon"]] for w in st.session_state.waypoints], color="red", weight=3).add_to(m)
         
-        # PIN DE DÉPART (Bleu)
-        start = st.session_state.waypoints[0]
-        folium.Marker(
-            location=[start["lat"], start["lon"]],
-            popup=f"Départ: {start['name']}",
-            icon=folium.Icon(color="blue", icon="play")
-        ).add_to(m)
+        num_wps = len(st.session_state.waypoints)
         
-        # PIN D'ARRIVÉE (Rouge) - Uniquement si on a au moins un segment
-        if len(st.session_state.waypoints) > 1:
-            end = st.session_state.waypoints[-1]
-            folium.Marker(
-                location=[end["lat"], end["lon"]],
-                popup=f"Arrivée: {end['name']}",
-                icon=folium.Icon(color="red", icon="flag")
-            ).add_to(m)
+        for i, w in enumerate(st.session_state.waypoints):
+            if i == 0:
+                # DÉPART : Bleu avec icône avion
+                folium.Marker(
+                    location=[w["lat"], w["lon"]],
+                    popup=f"Départ: {w['name']}",
+                    icon=folium.Icon(color="blue", icon="plane", prefix="fa")
+                ).add_to(m)
+            elif i == num_wps - 1:
+                # ARRIVÉE : Rouge avec drapeau
+                folium.Marker(
+                    location=[w["lat"], w["lon"]],
+                    popup=f"Arrivée: {w['name']}",
+                    icon=folium.Icon(color="red", icon="flag")
+                ).add_to(m)
+            else:
+                # POINTS INTERMÉDIAIRES : Jaune avec un cercle/point
+                folium.Marker(
+                    location=[w["lat"], w["lon"]],
+                    popup=f"WP: {w['name']}",
+                    icon=folium.Icon(color="orange", icon="dot-circle-o", prefix="fa")
+                ).add_to(m)
         
-        # Rendu de la carte sans rechargement intempestif
-        st_folium(m, width="100%", height=350, key="map_v34", returned_objects=[])
+        st_folium(m, width="100%", height=350, key="map_v35", returned_objects=[])
 
 # ─── LOG DE NAVIGATION & PROFIL ───
 if len(st.session_state.waypoints) > 1:
