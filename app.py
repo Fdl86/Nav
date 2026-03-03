@@ -15,11 +15,14 @@ PRESSURE_MAP = {1000:975, 1500:960, 2000:950, 2500:925, 3000:900, 5000:850, 7000
 
 @st.cache_data(ttl=86400)
 def load_airports():
+    base = {"LFBI": {"name":"Poitiers Biard", "lat":46.5877, "lon":0.3069}}
     try:
         df = pd.read_csv("https://ourairports.com/data/airports.csv", usecols=['ident','name','latitude_deg','longitude_deg','iso_country','type'])
         fr = df[(df['iso_country']=='FR') & (df['type'].isin(['large_airport','medium_airport','small_airport']))]
-        return {row['ident']: {"name":row['name'], "lat":row['latitude_deg'], "lon":row['longitude_deg']} for _,row in fr.iterrows()}
-    except: return {"LFBI": {"name":"Poitiers Biard", "lat":46.5877, "lon":0.3069}}
+        downloaded = {row['ident']: {"name":row['name'], "lat":row['latitude_deg'], "lon":row['longitude_deg']} for _,row in fr.iterrows()}
+        base.update(downloaded)
+        return base
+    except: return base
 
 AIRPORTS = load_airports()
 
@@ -79,16 +82,16 @@ def create_pdf(df_nav, metar_text):
     return bytes(pdf.output())
 
 # ─── INTERFACE ───
-st.set_page_config(page_title="SkyAssistant V37", layout="wide")
+st.set_page_config(page_title="SkyAssistant V38", layout="wide")
 if 'waypoints' not in st.session_state: st.session_state.waypoints = []
 
 with st.sidebar:
-    st.title("✈️ SkyAssistant V37")
+    st.title("✈️ SkyAssistant V38")
     search = st.text_input("🔍 Rechercher OACI", "").upper()
     sugg = [k for k in AIRPORTS.keys() if k.startswith(search)] if search else []
     if sugg and st.button(f"Départ : {sugg[0]}"):
         ap = AIRPORTS[sugg[0]]; elev = get_elevation_ft(ap['lat'], ap['lon'])
-        st.session_state.waypoints = [{"name": sugg[0], "lat": ap['lat'], "lon": ap['lon'], "alt": elev, "elev": elev, "is_land": False}]
+        st.session_state.waypoints = [{"name": sugg[0], "lat": ap['lat'], "lon": ap['lon'], "alt": elev, "elev": elev, "arr_type": "Direct"}]
         st.rerun()
     st.markdown("---")
     tas = st.number_input("TAS (kt)", 50, 250, 100)
@@ -114,7 +117,7 @@ with col_ctrl:
         last = st.session_state.waypoints[-1]; R = 3440.065
         brng, la1, lo1 = math.radians(tc_in), math.radians(last["lat"]), math.radians(last["lon"])
         la2 = math.degrees(la1 + (dist_in/R) * math.cos(brng)); lo2 = math.degrees(lo1 + (dist_in/R) * math.sin(brng) / math.cos(la1))
-        st.session_state.waypoints.append({"name": f"WP{len(st.session_state.waypoints)}", "lat": la2, "lon": lo2, "tc": tc_in, "dist": dist_in, "alt": alt_in, "manual_wind": m_wind, "elev": get_elevation_ft(la2, lo2), "is_land": False})
+        st.session_state.waypoints.append({"name": f"WP{len(st.session_state.waypoints)}", "lat": la2, "lon": lo2, "tc": tc_in, "dist": dist_in, "alt": alt_in, "manual_wind": m_wind, "elev": get_elevation_ft(la2, lo2), "arr_type": "Direct"})
         st.rerun()
 
 with col_map:
@@ -129,7 +132,7 @@ with col_map:
             icon_type = "plane" if i == 0 else ("flag" if i == num_wps - 1 else "dot-circle-o")
             folium.Marker([w["lat"], w["lon"]], popup=f"{w['name']}", icon=folium.Icon(color=icon_color, icon=icon_type, prefix="fa")).add_to(m)
         folium.LayerControl().add_to(m)
-        st_folium(m, width="100%", height=350, key="map_v37", returned_objects=[])
+        st_folium(m, width="100%", height=350, key="map_v38", returned_objects=[])
 
 # ─── LOG DE NAVIGATION & PROFIL ───
 if len(st.session_state.waypoints) > 1:
@@ -137,8 +140,6 @@ if len(st.session_state.waypoints) > 1:
     curr_t = dt.datetime.now(dt.timezone.utc)
     nav_data, dist_p, alt_p, terr_p = [], [0], [st.session_state.waypoints[0]["elev"]], [st.session_state.waypoints[0]["elev"]]
     d_total = 0; fig = go.Figure()
-
-    # On suit l'altitude actuelle au départ de chaque branche
     current_altitude_at_start = st.session_state.waypoints[0]["elev"]
 
     for i in range(1, len(st.session_state.waypoints)):
@@ -151,11 +152,10 @@ if len(st.session_state.waypoints) > 1:
         
         total_sec = (w2["dist"] / gs) * 3600
         eet_str = f"{int(total_sec//60):02d}:{int(total_sec%60):02d}"
-
         alt_croisiere = w2["alt"]
         toc_tod_str = ""
 
-       # MODIFICATION DANS LE CALCUL TOC
+        # TOC
         if alt_croisiere > current_altitude_at_start:
             t_climb_s = ((alt_croisiere - current_altitude_at_start) / v_climb) * 60
             dist_climb = (gs * (t_climb_s/3600))
@@ -164,13 +164,16 @@ if len(st.session_state.waypoints) > 1:
                 toc_tod_str += f"TOC: {round(dist_climb,1)}NM ({t_str}) "
                 if dist_climb < w2["dist"]:
                     dist_p.append(d_total + dist_climb); alt_p.append(alt_croisiere); terr_p.append(w1["elev"])
-                    # MISE À JOUR ICI : Ajout du temps dans l'annotation
-                    fig.add_annotation(x=d_total + dist_climb, y=alt_croisiere, text=f"TOC ({t_str})", showarrow=True, arrowhead=2)
+                    fig.add_annotation(x=d_total + dist_climb, y=alt_croisiere, text=f"TOC ({t_str})", showarrow=True)
 
-        # MODIFICATION DANS LE CALCUL TOD
+        # TOD
         is_last = (i == len(st.session_state.waypoints) - 1)
-        if is_last or w2.get("is_land", False):
-            alt_target = w2["elev"] + 1500
+        arr_type = w2.get("arr_type", "Direct")
+        if is_last and arr_type == "Direct": arr_type = "VT (1500ft)" # Par défaut sur le dernier point
+
+        if arr_type != "Direct":
+            offset = 1500 if "VT" in arr_type else 1000
+            alt_target = w2["elev"] + offset
             t_desc_s = ((alt_croisiere - alt_target) / v_descent) * 60 if alt_croisiere > alt_target else 0
             dist_desc = (gs * (t_desc_s/3600))
             if dist_desc > 0.1:
@@ -178,32 +181,25 @@ if len(st.session_state.waypoints) > 1:
                 toc_tod_str += f"TOD: {round(dist_desc,1)}NM ({t_str})"
                 if dist_desc < w2["dist"]:
                     dist_p.append(d_total + (w2["dist"] - dist_desc)); alt_p.append(alt_croisiere); terr_p.append(w2["elev"])
-                    # MISE À JOUR ICI : Ajout du temps dans l'annotation
-                    fig.add_annotation(x=d_total + (w2["dist"] - dist_desc), y=alt_croisiere, text=f"TOD ({t_str})", showarrow=True, arrowhead=2)
-                    
-            # Arrivée au palier 1500ft puis sol
+                    fig.add_annotation(x=d_total + (w2["dist"] - dist_desc), y=alt_croisiere, text=f"TOD ({t_str})", showarrow=True)
+            
             d_total += w2["dist"]
             dist_p.append(d_total); alt_p.append(alt_target); terr_p.append(w2["elev"])
             dist_p.append(d_total); alt_p.append(w2["elev"]); terr_p.append(w2["elev"])
-            fig.add_vline(x=d_total, line_width=2, line_dash="dash", line_color="orange", annotation_text=f"Verticale {w2['name']}")
-            current_altitude_at_start = w2["elev"] # On repart du sol pour la suite
+            fig.add_vline(x=d_total, line_width=2, line_dash="dash", line_color="orange", annotation_text=f"{arr_type} {w2['name']}")
+            current_altitude_at_start = w2["elev"]
         else:
             d_total += w2["dist"]
             dist_p.append(d_total); alt_p.append(alt_croisiere); terr_p.append(w2["elev"])
-            current_altitude_at_start = alt_croisiere # On reste en l'air
+            current_altitude_at_start = alt_croisiere
 
-        nav_data.append({"Branche": f"{w1['name']}➔{w2['name']}", "Vent": f"{int(wd)}/{int(ws)}kt", "Source": src, "GS": f"{int(gs)}kt", "EET": eet_str, "TOC/TOD": toc_tod_str.strip(), "Toucher": w2.get("is_land", False), "Suppr": False, "_idx": i})
+        nav_data.append({"Branche": f"{w1['name']}➔{w2['name']}", "Vent": f"{int(wd)}/{int(ws)}kt", "Source": src, "GS": f"{int(gs)}kt", "EET": eet_str, "TOC/TOD": toc_tod_str.strip(), "Arrivée": arr_type, "Suppr": False, "_idx": i})
 
     st.subheader("📋 Log de Navigation")
     df_nav = pd.DataFrame(nav_data)
     edited_log = st.data_editor(df_nav, column_config={
         "Branche": st.column_config.TextColumn("Branche", width="medium"),
-        "Vent": st.column_config.TextColumn("Vent", disabled=True),
-        "Source": st.column_config.TextColumn("Source", disabled=True),
-        "GS": st.column_config.TextColumn("GS", disabled=True),
-        "EET": st.column_config.TextColumn("EET", disabled=True),
-        "TOC/TOD": st.column_config.TextColumn("TOC/TOD", width="large", disabled=True),
-        "Toucher": st.column_config.CheckboxColumn("🛬", width="small"),
+        "Arrivée": st.column_config.SelectboxColumn("Type Arrivée", options=["Direct", "TDP (1000ft)", "VT (1500ft)"], width="medium"),
         "Suppr": st.column_config.CheckboxColumn("❌", width="small"),
         "_idx": None
     }, hide_index=True)
@@ -214,11 +210,11 @@ if len(st.session_state.waypoints) > 1:
             if not row['Suppr']:
                 wp = st.session_state.waypoints[row['_idx']].copy()
                 if "➔" in row['Branche']: wp['name'] = row['Branche'].split("➔")[1]
-                wp['is_land'] = row['Toucher']
+                wp['arr_type'] = row['Arrivée']
                 new_wps.append(wp)
         st.session_state.waypoints = new_wps; st.rerun()
 
-    st.download_button(label="📥 Log PDF", data=create_pdf(df_nav.drop(columns=['Suppr', '_idx', 'Toucher']), metar_val), file_name="nav_log.pdf")
+    st.download_button(label="📥 Log PDF", data=create_pdf(df_nav.drop(columns=['Suppr', '_idx', 'Arrivée']), metar_val), file_name="nav_log.pdf")
 
     fig.add_trace(go.Scatter(x=dist_p, y=terr_p, fill='tozeroy', name='Relief', line_color='sienna'))
     fig.add_trace(go.Scatter(x=dist_p, y=alt_p, name='Profil Avion', line=dict(color='royalblue', width=4)))
