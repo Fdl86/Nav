@@ -120,38 +120,37 @@ with col_ctrl:
 
 with col_map:
     if st.session_state.waypoints:
-        # Centrage de la carte
+        # Initialisation de la carte
         m = folium.Map(location=[st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"]], zoom_start=9)
         
-        # Tracé du trait (le "trait de nav")
+        # AJOUT DE LA COUCHE SATELLITE (Optionnelle via le sélecteur)
+        folium.TileLayer(
+            tiles='https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+            attr='Google Satellite',
+            name='Vue Satellite',
+            overlay=False,
+            control=True
+        ).add_to(m)
+        
+        # On garde la carte par défaut aussi
+        folium.TileLayer('openstreetmap', name='Carte Standard').add_to(m)
+
+        # Tracé du trait de navigation
         folium.PolyLine([[w["lat"], w["lon"]] for w in st.session_state.waypoints], color="red", weight=3).add_to(m)
         
         num_wps = len(st.session_state.waypoints)
-        
         for i, w in enumerate(st.session_state.waypoints):
             if i == 0:
-                # DÉPART : Bleu avec icône avion
-                folium.Marker(
-                    location=[w["lat"], w["lon"]],
-                    popup=f"Départ: {w['name']}",
-                    icon=folium.Icon(color="blue", icon="plane", prefix="fa")
-                ).add_to(m)
+                folium.Marker([w["lat"], w["lon"]], popup=f"Départ: {w['name']}", icon=folium.Icon(color="blue", icon="plane", prefix="fa")).add_to(m)
             elif i == num_wps - 1:
-                # ARRIVÉE : Rouge avec drapeau
-                folium.Marker(
-                    location=[w["lat"], w["lon"]],
-                    popup=f"Arrivée: {w['name']}",
-                    icon=folium.Icon(color="red", icon="flag")
-                ).add_to(m)
+                folium.Marker([w["lat"], w["lon"]], popup=f"Arrivée: {w['name']}", icon=folium.Icon(color="red", icon="flag")).add_to(m)
             else:
-                # POINTS INTERMÉDIAIRES : Jaune avec un cercle/point
-                folium.Marker(
-                    location=[w["lat"], w["lon"]],
-                    popup=f"WP: {w['name']}",
-                    icon=folium.Icon(color="orange", icon="dot-circle-o", prefix="fa")
-                ).add_to(m)
+                folium.Marker([w["lat"], w["lon"]], popup=f"WP: {w['name']}", icon=folium.Icon(color="orange", icon="dot-circle-o", prefix="fa")).add_to(m)
         
-        st_folium(m, width="100%", height=350, key="map_v35", returned_objects=[])
+        # AJOUT DU CONTRÔLE DES COUCHES (Le petit bouton en haut à droite)
+        folium.LayerControl().add_to(m)
+        
+        st_folium(m, width="100%", height=350, key="map_v36", returned_objects=[])
 
 # ─── LOG DE NAVIGATION & PROFIL ───
 if len(st.session_state.waypoints) > 1:
