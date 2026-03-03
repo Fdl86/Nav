@@ -237,20 +237,27 @@ if len(st.session_state.waypoints) > 1:
     fig.add_trace(go.Scatter(x=dist_p, y=terr_p, fill='tozeroy', name='Relief', line_color='sienna'))
     fig.add_trace(go.Scatter(x=dist_p, y=alt_p, name='Profil Avion', line=dict(color='royalblue', width=4)))
     
-    # On fixe les marges pour gagner de la place sur mobile
+    # CALCUL DE LA LARGEUR DYNAMIQUE : 
+    # On assure au moins 1000px pour que les textes ne se touchent jamais
+    graph_width = max(1000, len(st.session_state.waypoints) * 150)
+
     fig.update_layout(
+        width=graph_width, # ON FORCE LA LARGEUR ICI
+        height=400,
         xaxis_title="Distance (NM)", 
         yaxis_title="Altitude (ft)", 
-        xaxis=dict(tickformat=".1f", fixedrange=True), # Bloque le zoom X
-        yaxis=dict(fixedrange=True),                   # Bloque le zoom Y
+        xaxis=dict(tickformat=".1f", fixedrange=True),
+        yaxis=dict(fixedrange=True),
         showlegend=False,
-        margin=dict(l=10, r=10, t=10, b=10)
+        margin=dict(l=40, r=40, t=20, b=40),
+        dragmode=False # Désactive le drag/zoom au niveau de Plotly
     )
     
-    # CONTENEUR SCROLLABLE AVEC GRAPHIQUE STATIQUE
-    st.markdown('<div class="mobile-scroll">', unsafe_allow_html=True)
-    st.plotly_chart(fig, use_container_width=True, config={
-        'staticPlot': True,  # CE PARAMÈTRE BLOQUE TOUT (Zoom, Drag, Resize)
+    # AFFICHAGE AVEC SCROLLBAR HTML
+    # On n'utilise PLUS use_container_width pour que la largeur de 1000px soit respectée
+    st.markdown('<div style="overflow-x: auto; overflow-y: hidden; width: 100%;">', unsafe_allow_html=True)
+    st.plotly_chart(fig, use_container_width=False, config={
+        'staticPlot': True, 
         'displayModeBar': False
     })
     st.markdown('</div>', unsafe_allow_html=True)
