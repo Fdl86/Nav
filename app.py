@@ -7,7 +7,6 @@ import folium
 from streamlit_folium import st_folium
 import plotly.graph_objects as go
 from fpdf import FPDF
-import io
 
 # ─── CONFIGURATION ───
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
@@ -83,12 +82,12 @@ def create_pdf(df_nav, metar_text):
     return bytes(pdf.output())
 
 # ─── INTERFACE ───
-st.set_page_config(page_title="SkyAssistant V42", layout="wide")
+st.set_page_config(page_title="SkyAssistant V40 (Fix)", layout="wide")
 
 if 'waypoints' not in st.session_state: st.session_state.waypoints = []
 
 with st.sidebar:
-    st.title("✈️ SkyAssistant V42")
+    st.title("✈️ SkyAssistant V40")
     search = st.text_input("🔍 Rechercher OACI", "").upper()
     sugg = [k for k in AIRPORTS.keys() if k.startswith(search)] if search else []
     if sugg and st.button(f"Départ : {sugg[0]}"):
@@ -125,11 +124,16 @@ with col_ctrl:
 with col_map:
     if st.session_state.waypoints:
         m = folium.Map(location=[st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"]], zoom_start=9)
+        folium.TileLayer(tiles='https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', attr='Google Satellite', name='Vue Satellite', overlay=False, control=True).add_to(m)
         folium.TileLayer('openstreetmap', name='Carte Standard').add_to(m)
         folium.PolyLine([[w["lat"], w["lon"]] for w in st.session_state.waypoints], color="red", weight=3).add_to(m)
+        num_wps = len(st.session_state.waypoints)
         for i, w in enumerate(st.session_state.waypoints):
-            folium.Marker([w["lat"], w["lon"]], popup=f"{w['name']}", icon=folium.Icon(color="red", icon="dot-circle-o", prefix="fa")).add_to(m)
-        st_folium(m, width="100%", height=300, key="map_v42", returned_objects=[])
+            icon_color = "blue" if i == 0 else ("red" if i == num_wps - 1 else "orange")
+            icon_type = "plane" if i == 0 else ("flag" if i == num_wps - 1 else "dot-circle-o")
+            folium.Marker([w["lat"], w["lon"]], popup=f"{w['name']}", icon=folium.Icon(color=icon_color, icon=icon_type, prefix="fa")).add_to(m)
+        folium.LayerControl().add_to(m)
+        st_folium(m, width="100%", height=300, key="map_v40_fix", returned_objects=[])
 
 # ─── LOG DE NAVIGATION & PROFIL ───
 if len(st.session_state.waypoints) > 1:
@@ -150,7 +154,6 @@ if len(st.session_state.waypoints) > 1:
         alt_croisiere = w2["alt"]
         toc_tod_str = ""
 
-        # TOC
         if alt_croisiere > current_altitude_at_start:
             t_climb_s = ((alt_croisiere - current_altitude_at_start) / v_climb) * 60
             dist_climb = (gs * (t_climb_s/3600))
@@ -159,9 +162,8 @@ if len(st.session_state.waypoints) > 1:
                 toc_tod_str += f"TOC: {round(dist_climb,1)}NM ({t_str}) "
                 if dist_climb < w2["dist"]:
                     dist_p.append(d_total + dist_climb); alt_p.append(alt_croisiere); terr_p.append(w1["elev"])
-                    fig.add_annotation(x=d_total + dist_climb, y=alt_croisiere, text=f"TOC ({t_str})", showarrow=True, ay=40)
+                    fig.add_annotation(x=d_total + dist_climb, y=alt_croisiere, text=f"TOC ({t_str})", showarrow=True, ay=45)
 
-        # TOD
         arr_type = w2.get("arr_type", "Direct")
         if (i == len(st.session_state.waypoints) - 1) and arr_type == "Direct": arr_type = "VT (1500ft)" 
 
@@ -175,8 +177,7 @@ if len(st.session_state.waypoints) > 1:
                 toc_tod_str += f"TOD: {round(dist_desc,1)}NM ({t_str})"
                 if dist_desc < w2["dist"]:
                     dist_p.append(d_total + (w2["dist"] - dist_desc)); alt_p.append(alt_croisiere); terr_p.append(w2["elev"])
-                    fig.add_annotation(x=d_total + (w2["dist"] - dist_desc), y=alt_croisiere, text=f"TOD ({t_str})", showarrow=True, ay=-40)
-            
+                    fig.add_annotation(x=d_total + (w2["dist"] - dist_desc), y=alt_croisiere, text=f"TOD ({t_str})", showarrow=True, ay=-45)
             d_total += w2["dist"]
             dist_p.append(d_total); alt_p.append(alt_target); terr_p.append(w2["elev"])
             dist_p.append(d_total); alt_p.append(w2["elev"]); terr_p.append(w2["elev"])
@@ -189,7 +190,7 @@ if len(st.session_state.waypoints) > 1:
 
         nav_data.append({"Branche": f"{w1['name']}➔{w2['name']}", "Vent": f"{int(wd)}/{int(ws)}kt", "Source": src, "GS": f"{int(gs)}kt", "EET": eet_str, "TOC/TOD": toc_tod_str.strip(), "Arrivée": arr_type, "Suppr": False, "_idx": i})
 
-    # AFFICHAGE TABLEAU
+    st.subheader("📋 Log de Navigation")
     df_nav = pd.DataFrame(nav_data)
     edited_log = st.data_editor(df_nav, column_config={
         "Branche": st.column_config.TextColumn("Branche", width="medium"),
@@ -213,51 +214,23 @@ if len(st.session_state.waypoints) > 1:
                 new_wps.append(wp)
         st.session_state.waypoints = new_wps; st.rerun()
 
-    # ─── SECTION PROFIL GRAPHIQUE BLINDÉ ───
-    st.subheader("📊 Profil de Vol (Défilement horizontal)")
+    st.download_button(label="📥 Log PDF", data=create_pdf(df_nav.drop(columns=['Suppr', '_idx', 'Arrivée']), metar_val), file_name="nav_log.pdf")
 
-    # On définit une largeur fixe pour éviter l'écrasement
-    graph_width = 1200 
-    
+    # ─── SECTION GRAPHIQUE SCROLLABLE & BLOQUÉ ───
     fig.add_trace(go.Scatter(x=dist_p, y=terr_p, fill='tozeroy', name='Relief', line_color='sienna'))
     fig.add_trace(go.Scatter(x=dist_p, y=alt_p, name='Profil Avion', line=dict(color='royalblue', width=4)))
     
+    # On force une largeur de 1000px pour éviter l'écrasement
     fig.update_layout(
-        width=graph_width, height=400,
-        xaxis_title="Distance (NM)", yaxis_title="Altitude (ft)",
-        xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True), # Sécurité Plotly
+        width=1000, height=400,
+        xaxis=dict(fixedrange=True, tickformat=".1f"), yaxis=dict(fixedrange=True),
         margin=dict(l=40, r=40, t=20, b=40), showlegend=False
     )
 
-    # ─── SECTION PROFIL (SIMPLE & BLINDÉ) ───
-    st.subheader("📊 Profil de Vol")
-
-    # On prépare le graphique
-    fig.add_trace(go.Scatter(x=dist_p, y=terr_p, fill='tozeroy', name='Relief', line_color='sienna'))
-    fig.add_trace(go.Scatter(x=dist_p, y=alt_p, name='Profil Avion', line=dict(color='royalblue', width=4)))
-    
-    # Largeur fixe pour éviter l'écrasement sur mobile
-    graph_width = 1000 
-
-    fig.update_layout(
-        width=graph_width,
-        height=400,
-        xaxis=dict(fixedrange=True, tickformat=".1f"), # Bloque le zoom axe X
-        yaxis=dict(fixedrange=True),                   # Bloque le zoom axe Y
-        margin=dict(l=40, r=40, t=20, b=40),
-        showlegend=False
-    )
-
-    # Le conteneur magique : simple, sans texte parasite
-    st.markdown(
-        f'<div style="overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; width: 100%;">', 
-        unsafe_allow_html=True
-    )
-    
+    # Conteneur HTML pour forcer le scroll horizontal sans zoom
+    st.markdown('<div style="overflow-x: auto; width: 100%; border: 1px solid #444; border-radius: 10px;">', unsafe_allow_html=True)
     st.plotly_chart(fig, use_container_width=False, config={
-        'staticPlot': True,         # Rend le graphique inerte (comme une image)
-        'displayModeBar': False,    # Cache les outils de zoom
-        'responsive': False         # Empêche le redimensionnement auto
+        'staticPlot': True,         # Désactive toute interaction (zoom/resize)
+        'displayModeBar': False
     })
-    
     st.markdown('</div>', unsafe_allow_html=True)
