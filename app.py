@@ -120,9 +120,31 @@ with col_ctrl:
 
 with col_map:
     if st.session_state.waypoints:
+        # Initialisation de la carte sur le premier point
         m = folium.Map(location=[st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"]], zoom_start=9)
+        
+        # Tracé de la ligne de navigation
         folium.PolyLine([[w["lat"], w["lon"]] for w in st.session_state.waypoints], color="red", weight=3).add_to(m)
-        st_folium(m, width="100%", height=350, key="map_v33_fixed", returned_objects=[])
+        
+        # PIN DE DÉPART (Bleu)
+        start = st.session_state.waypoints[0]
+        folium.Marker(
+            location=[start["lat"], start["lon"]],
+            popup=f"Départ: {start['name']}",
+            icon=folium.Icon(color="blue", icon="play")
+        ).add_to(m)
+        
+        # PIN D'ARRIVÉE (Rouge) - Uniquement si on a au moins un segment
+        if len(st.session_state.waypoints) > 1:
+            end = st.session_state.waypoints[-1]
+            folium.Marker(
+                location=[end["lat"], end["lon"]],
+                popup=f"Arrivée: {end['name']}",
+                icon=folium.Icon(color="red", icon="flag")
+            ).add_to(m)
+        
+        # Rendu de la carte sans rechargement intempestif
+        st_folium(m, width="100%", height=350, key="map_v34", returned_objects=[])
 
 # ─── LOG DE NAVIGATION & PROFIL ───
 if len(st.session_state.waypoints) > 1:
