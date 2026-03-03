@@ -153,7 +153,7 @@ if len(st.session_state.waypoints) > 1:
         fuel_branch = round(hours * fuel_flow, 1)
         alt_crois = w2["alt"]; tt_str = ""
 
-        # TOC
+        # TOC (Section à modifier dans ta boucle for)
         if alt_crois > current_alt:
             t_climb = ((alt_crois - current_alt) / v_climb) * 60
             d_climb = (gs * (t_climb/3600))
@@ -162,7 +162,9 @@ if len(st.session_state.waypoints) > 1:
                 tt_str += f"TOC:{round(d_climb,1)}NM "
                 if d_climb < w2["dist"]:
                     dist_p.append(d_total + d_climb); alt_p.append(alt_crois); terr_p.append(w1["elev"])
-                    fig.add_annotation(x=d_total + d_climb, y=alt_crois, text=f"TOC ({t_cl_str})", showarrow=True, ay=45)
+                    fig.add_annotation(x=d_total + d_climb, y=alt_crois, 
+                    text=f"TOC {round(d_climb,1)}NM ({t_cl_str})", 
+                    showarrow=True, ay=45)
 
         # TOD
         at = w2.get("arr_type", "Direct")
@@ -177,7 +179,7 @@ if len(st.session_state.waypoints) > 1:
                 tt_str += f"TOD:{round(d_desc,1)}NM"
                 if d_desc < w2["dist"]:
                     dist_p.append(d_total + (w2["dist"] - d_desc)); alt_p.append(alt_crois); terr_p.append(w2["elev"])
-                    fig.add_annotation(x=d_total + (w2["dist"] - d_desc), y=alt_crois, text=f"TOD ({t_de_str})", showarrow=True, ay=-45)
+                    fig.add_annotation(x=d_total + (w2["dist"] - d_desc), y=alt_crois, text=f"TOD {round(d_desc,1)}NM ({t_de_str})", showarrow=True, ay=-45)
             d_total += w2["dist"]; dist_p.append(d_total); alt_p.append(alt_t); terr_p.append(w2["elev"])
             dist_p.append(d_total); alt_p.append(w2["elev"]); terr_p.append(w2["elev"])
             fig.add_vline(x=d_total, line_width=2, line_dash="dash", line_color="orange")
