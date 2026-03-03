@@ -55,43 +55,53 @@ def get_wind_v27(lat, lon, alt_ft, time_dt, manual_wind=None):
 
 # ─── FONCTION EXPORT PDF ───
 def create_pdf(df_nav, metar_text):
-    pdf = FPDF()
+    # Initialisation PDF
+    pdf = FPDF(orientation='P', unit='mm', format='A4')
     pdf.add_page()
     
-    # 1. Titre
+    # Configuration des polices (Standard PDF ne supporte que latin-1)
     pdf.set_font("helvetica", 'B', 16)
-    pdf.cell(0, 10, "Log de Navigation - SkyAssistant", ln=True, align='C')
+    pdf.cell(0, 10, "LOG DE NAVIGATION - SKYASSISTANT", ln=True, align='C')
     pdf.ln(5)
     
-    # 2. METAR (Nettoyé pour éviter les caractères invisibles qui bloquent le PDF)
-    pdf.set_font("helvetica", size=10)
-    clean_metar = str(metar_text).encode('latin-1', 'ignore').decode('latin-1')
-    pdf.multi_cell(0, 8, f"METAR Depart: {clean_metar}")
-    pdf.ln(5)
+    # Section METAR
+    pdf.set_font("helvetica", 'B', 10)
+    pdf.cell(0, 8, "METAR DE DEPART :", ln=True)
+    pdf.set_font("helvetica", size=9)
+    # Nettoyage strict des caractères non-ASCII
+    clean_metar = metar_text.encode('ascii', 'ignore').decode('ascii')
+    pdf.multi_cell(0, 6, clean_metar, border=1)
+    pdf.ln(10)
     
-    # 3. Header Tableau
-    pdf.set_fill_color(200, 220, 255)
+    # Tableau de Navigation
     pdf.set_font("helvetica", 'B', 9)
+    pdf.set_fill_color(220, 220, 220)
+    
+    # Largeurs de colonnes ajustées (Total 190mm)
+    w = [45, 35, 25, 25, 60] 
     cols = ["Branche", "Vent", "GS", "EET", "TOC/TOD"]
-    for col in cols:
-        pdf.cell(38, 10, col, border=1, fill=True, align='C')
+    
+    for i in range(len(cols)):
+        pdf.cell(w[i], 10, cols[i], border=1, fill=True, align='C')
     pdf.ln()
     
-    # 4. Corps Tableau
     pdf.set_font("helvetica", size=9)
     for _, row in df_nav.iterrows():
-        # On remplace la flèche ➔ par -> pour le PDF
-        txt_br = str(row['Branche']).replace('➔', '->').encode('latin-1', 'ignore').decode('latin-1')
-        pdf.cell(38, 10, txt_br, border=1)
-        pdf.cell(38, 10, str(row['Vent']), border=1)
-        pdf.cell(38, 10, str(row['GS']), border=1)
-        pdf.cell(38, 10, str(row['EET']), border=1)
-        # On limite TOC/TOD pour que ça ne déborde pas de la cellule
-        txt_tt = str(row['TOC/TOD']).replace('NM', '').encode('latin-1', 'ignore').decode('latin-1')
-        pdf.cell(38, 10, txt_tt, border=1)
+        # On remplace les caractères spéciaux par du texte standard
+        txt_br = str(row['Branche']).replace('➔', '->').encode('ascii', 'ignore').decode('ascii')
+        txt_v = str(row['Vent']).encode('ascii', 'ignore').decode('ascii')
+        txt_gs = str(row['GS']).encode('ascii', 'ignore').decode('ascii')
+        txt_eet = str(row['EET']).encode('ascii', 'ignore').decode('ascii')
+        txt_tt = str(row['TOC/TOD']).encode('ascii', 'ignore').decode('ascii')
+        
+        pdf.cell(w[0], 10, txt_br, border=1)
+        pdf.cell(w[1], 10, txt_v, border=1)
+        pdf.cell(w[2], 10, txt_gs, border=1, align='C')
+        pdf.cell(w[3], 10, txt_eet, border=1, align='C')
+        pdf.cell(w[4], 10, txt_tt, border=1)
         pdf.ln()
-    
-    # 5. GÉNÉRATION : fpdf2 nécessite output() sans arguments pour renvoyer les bytes
+
+    # Retourne le flux binaire directement
     return pdf.output()
 
 # ─── INTERFACE ───
