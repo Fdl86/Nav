@@ -213,35 +213,41 @@ if len(st.session_state.waypoints) > 1:
                 new_wps.append(wp)
         st.session_state.waypoints = new_wps; st.rerun()
 
-    # SECTION GRAPHIQUE FIXE (IMAGE)
-    st.subheader("📊 Profil de Vol (Griser pour faire défiler)")
+    # ─── SECTION PROFIL GRAPHIQUE BLINDÉ ───
+    st.subheader("📊 Profil de Vol (Défilement horizontal)")
+
+    # On définit une largeur fixe pour éviter l'écrasement
+    graph_width = 1200 
     
     fig.add_trace(go.Scatter(x=dist_p, y=terr_p, fill='tozeroy', name='Relief', line_color='sienna'))
     fig.add_trace(go.Scatter(x=dist_p, y=alt_p, name='Profil Avion', line=dict(color='royalblue', width=4)))
     
-    # On force une largeur très grande pour l'image
-    img_width = 1200 
     fig.update_layout(
-        width=img_width, height=400,
+        width=graph_width, height=400,
         xaxis_title="Distance (NM)", yaxis_title="Altitude (ft)",
-        margin=dict(l=40, r=40, t=20, b=40), showlegend=False,
-        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-        font=dict(color="white", size=14)
+        xaxis=dict(fixedrange=True), yaxis=dict(fixedrange=True), # Sécurité Plotly
+        margin=dict(l=40, r=40, t=20, b=40), showlegend=False
     )
 
-    # Conversion en image PNG
-    try:
-        img_bytes = fig.to_image(format="png", engine="kaleido")
-        # Affichage dans un conteneur HTML avec défilement
-        st.markdown(
-            f"""
-            <div style="overflow-x: auto; white-space: nowrap; width: 100%; border: 1px solid #444; border-radius: 10px;">
-                <img src="data:image/png;base64,{pd.io.common.base64.b64encode(img_bytes).decode()}" style="width: {img_width}px; max-width: none;">
+    # LE BOUCLIER ANTI-ZOOM : On crée un conteneur avec un calque invisible par-dessus
+    st.markdown(
+        f"""
+        <div style="overflow-x: auto; width: 100%; position: relative; border: 1px solid #444; border-radius: 10px;">
+            <div style="
+                position: absolute; 
+                top: 0; left: 0; 
+                width: {graph_width}px; height: 100%; 
+                z-index: 10; 
+                background: rgba(0,0,0,0);
+                cursor: grab;">
             </div>
-            """, 
-            unsafe_allow_html=True
-        )
-    except Exception as e:
-        # Fallback si kaleido n'est pas installé
-        st.warning("Utilisation du mode interactif (installez 'kaleido' pour le mode image fixe)")
-        st.plotly_chart(fig, use_container_width=False)
+            
+            <div style="width: {graph_width}px;">
+        """, 
+        unsafe_allow_html=True
+    )
+    
+    # On affiche le graphique normalement (il sera sous le bouclier)
+    st.plotly_chart(fig, use_container_width=False, config={'displayModeBar': False})
+    
+    st.markdown("</div></div>", unsafe_allow_html=True)
