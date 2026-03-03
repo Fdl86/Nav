@@ -191,7 +191,7 @@ if len(st.session_state.waypoints) > 1:
     d_total = 0
     for i in range(1, len(st.session_state.waypoints)):
         w1, w2 = st.session_state.waypoints[i-1], st.session_state.waypoints[i]
-        wd, ws, run, src = get_wind_v27(w2["lat"], w2["lon"], w2["alt"], curr_t, w2.get("manual_wind"))
+        wd, ws, run, src = get_wind_v27_final(w2["lat"], w2["lon"], w2["alt"], curr_t, w2.get("manual_wind"))
         
         wa = math.radians(wd - w2["tc"])
         sin_wca = (ws/tas)*math.sin(wa)
