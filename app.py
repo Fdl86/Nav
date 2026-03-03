@@ -6,17 +6,17 @@ import math
 import folium
 from streamlit_folium import st_folium
 
-# ─── CONFIGURATION ───
+# ─── CONFIGURATION & PALIERS DE PRESSION ───
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
 ELEVATION_URL = "https://api.open-meteo.com/v1/elevation"
 
-# Mapping pression (1 hPa ≈ 28 ft)
+# Mapping pour coller aux couches de pression VFR (1 hPa ≈ 28 ft)
 PRESSURE_MAP = {
     1000: 975, 1500: 960, 2000: 950, 2500: 925, 3000: 900, 
     3500: 885, 4500: 865, 5000: 850, 5500: 835, 7500: 775, 9500: 725
 }
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=86400)
 def load_airports():
     try:
         df = pd.read_csv("https://ourairports.com/data/airports.csv", usecols=['ident','name','latitude_deg','longitude_deg','iso_country','type'])
@@ -26,42 +26,44 @@ def load_airports():
 
 AIRPORTS = load_airports()
 
-# ─── MOTEUR V20 : SÉLECTEUR DE MODÈLE HD ───
+# ─── MOTEUR MÉTÉO V21 : CASCADE ANTI-ZÉRO ───
 def get_wind_v21(lat, lon, alt_ft, time_dt):
     target = min(PRESSURE_MAP.keys(), key=lambda x: abs(x - alt_ft))
     lv = PRESSURE_MAP[target]
     
-    # On demande les 3 modèles d'un coup pour comparer
+    # On interroge les 3 sources majeures en une seule requête
     params = {
         "latitude": lat, "longitude": lon,
         "hourly": f"wind_speed_{lv}hPa,wind_direction_{lv}hPa",
         "models": "icon_d2,meteofrance_arome_france_hd,gfs_seamless",
-        "wind_speed_unit": "kn", "timezone": "UTC"
+        "wind_speed_unit": "kn", "timezone": "UTC", "forecast_days": 1
     }
     
     try:
         r = requests.get(OPEN_METEO_URL, params=params).json()
         h = r.get("hourly", {})
         
-        # 1. On tente ICON-D2 (Le plus frais)
+        # 1. Priorité ICON-D2 (Le plus réactif au Nord/Centre)
         ws_icon = h.get(f"wind_speed_{lv}hPa_icon_d2", [None])[0]
-        if ws_icon is not None and ws_icon > 0.1:
+        if ws_icon is not None and ws_icon > 0.5:
             ws, wd, src = h[f"wind_speed_{lv}hPa_icon_d2"], h[f"wind_direction_{lv}hPa_icon_d2"], "ICON-D2"
         
-        # 2. Sinon on tente AROME HD
+        # 2. Sinon AROME HD (Spécialiste France, couvre Castelnaudary)
         elif h.get(f"wind_speed_{lv}hPa_meteofrance_arome_france_hd", [None])[0] is not None:
             ws, wd, src = h[f"wind_speed_{lv}hPa_meteofrance_arome_france_hd"], h[f"wind_direction_{lv}hPa_meteofrance_arome_france_hd"], "AROME HD"
         
-        # 3. En dernier recours, le modèle global (Garantit qu'on n'a pas 0)
+        # 3. Dernier recours : GFS Global (Ne renvoie jamais null)
         else:
             ws, wd, src = h[f"wind_speed_{lv}hPa_gfs_seamless"], h[f"wind_direction_{lv}hPa_gfs_seamless"], "GFS Global"
 
+        run_time = h.get("time", ["N/A"])[0]
         idx = min(range(len(h["time"])), key=lambda k: abs(datetime.fromisoformat(h["time"][k]) - time_dt))
-        return wd[idx], ws[idx], h["time"][0], src
+        
+        return wd[idx], ws[idx], run_time, src
     except:
-        return 0, 0, "N/A", "Erreur"
+        return 0, 0, "Erreur", "N/A"
 
-# ─── LOGIQUE GÉO ───
+# ─── CALCULS AÉRONAUTIQUES ───
 def calculate_gs_and_wca(tas, tc, wd, ws):
     if wd is None or ws is None: return tas, 0
     wa = math.radians(wd - tc)
@@ -80,28 +82,29 @@ def calculate_destination(lat, lon, bearing, dist_nm):
     return math.degrees(la2), math.degrees(lo2)
 
 # ─── INTERFACE ───
-st.set_page_config(page_title="SkyAssistant V20", layout="wide")
+st.set_page_config(page_title="SkyAssistant V21", layout="wide")
 if 'waypoints' not in st.session_state: st.session_state.waypoints = []
 
 with st.sidebar:
-    st.title("🛠️ Nav Control")
+    st.title("🛠️ Flight Planning")
     oaci = st.text_input("Code OACI Départ", "").upper()
     if oaci in AIRPORTS:
         st.success(f"📍 {AIRPORTS[oaci]['name']}")
-        if st.button("🚀 Initialiser"):
-            st.session_state.waypoints = [{"name": oaci, "lat": AIRPORTS[oaci]["lat"], "lon": AIRPORTS[oaci]["lon"], "alt": 2500}]
+        if st.button("🚀 Initialiser le vol"):
+            ap = AIRPORTS[oaci]
+            st.session_state.waypoints = [{"name": oaci, "lat": ap["lat"], "lon": ap["lon"], "alt": 2500}]
             st.rerun()
     
     st.markdown("---")
-    tas = st.number_input("TAS (kt)", 50, 250, 100)
-    conso = st.number_input("Conso (L/h)", 5, 100, 22)
-    if st.button("🗑️ Reset Plan de Vol"):
+    tas = st.number_input("TAS (Vitesse Propre) kt", 50, 250, 100)
+    conso = st.number_input("Consommation (L/h)", 5, 100, 22)
+    if st.button("🗑️ Tout effacer"):
         st.session_state.waypoints = []; st.rerun()
 
 col_map, col_ctrl = st.columns([2, 1])
 
 with col_ctrl:
-    st.subheader("📍 Segments")
+    st.subheader("📍 Ajouter Segment")
     tc_in = st.number_input("Route Vraie (Rv) °", 0, 359, 0)
     dist_in = st.number_input("Distance (NM)", 0.1, 100.0, 15.0)
     alt_in = st.number_input("Altitude (ft)", 1000, 12500, 2500, step=500)
@@ -120,36 +123,43 @@ with col_ctrl:
 
 with col_map:
     if st.session_state.waypoints:
-        m = folium.Map(location=[st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"]], zoom_start=8)
+        start_pt = [st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"]]
+        m = folium.Map(location=start_pt, zoom_start=9)
         folium.PolyLine([[w["lat"], w["lon"]] for w in st.session_state.waypoints], color="red", weight=3).add_to(m)
-        st_folium(m, width="100%", height=350, key="map_v20")
-    else: st.info("Saisissez un départ.")
+        for w in st.session_state.waypoints: folium.Marker([w["lat"], w["lon"]], tooltip=w['name']).add_to(m)
+        st_folium(m, width="100%", height=350, key="map_v21")
+    else: st.info("Entrez un code OACI de départ.")
 
-# ─── AFFICHAGE LOG ───
+# ─── LOG DE NAVIGATION FINAL ───
 if len(st.session_state.waypoints) > 1:
     st.markdown("---")
     curr_t = datetime.utcnow()
+    # Calcul déclinaison magnétique approximative
     mv = round(-1.2 - (st.session_state.waypoints[0]["lon"] * 0.35) + (st.session_state.waypoints[0]["lat"] * 0.05), 1)
     
-    rows = []
-    t_min, t_dist = 0, 0
+    nav_data = []
+    total_min, total_dist = 0, 0
+    
     for i in range(1, len(st.session_state.waypoints)):
         w1, w2 = st.session_state.waypoints[i-1], st.session_state.waypoints[i]
-        wd, ws, run, src = get_wind_v20(w2["lat"], w2["lon"], w2["alt"], curr_t)
+        wd, ws, run, model_name = get_wind_v21(w2["lat"], w2["lon"], w2["alt"], curr_t)
         gs, wca = calculate_gs_and_wca(tas, w2["tc"], wd, ws)
         eet = (w2["dist"]/gs)*60
-        t_min += eet; t_dist += w2["dist"]
+        total_min += eet; total_dist += w2["dist"]
         
-        rows.append({
+        nav_data.append({
             "Branche": f"{w1['name']}➔{w2['name']}",
-            "Vent": f"{int(wd)}/{int(ws)}",
-            "Cm": f"{int((w2['tc']-wca-mv)%360):03d}°",
+            "Alt": f"{w2['alt']}ft",
+            "Vent": f"{int(wd)}/{int(ws)}kt",
+            "Cm (Cap Mag)": f"{int((w2['tc']-wca-mv)%360):03d}°",
             "GS": f"{int(gs)}kt",
             "EET": f"{int(eet):02d}:{int((eet%1)*60):02d}",
-            "Run": run,
-            "Modèle": src
+            "Modèle": model_name,
+            "Run (UTC)": run
         })
 
-    st.subheader("📋 Log de Navigation V20")
-    st.table(pd.DataFrame(rows))
-    st.success(f"**Total : {t_dist:.1f} NM | {int(t_min)} min | Fuel (+10L) : {round((t_min/60)*conso + 10, 1)} L**")
+    st.subheader("📋 Log de Navigation Intelligent")
+    st.table(pd.DataFrame(nav_data))
+    
+    fuel_total = round((total_min/60)*conso + 10, 1)
+    st.success(f"**BILAN : {total_dist:.1f} NM | {int(total_min)} minutes | Fuel : {fuel_total} L (incl. forfait 10L)**")
