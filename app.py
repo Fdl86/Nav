@@ -7,6 +7,7 @@ import folium
 from streamlit_folium import st_folium
 import plotly.graph_objects as go
 from fpdf import FPDF
+import io
 
 # ─── CONFIGURATION ───
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
@@ -81,25 +82,13 @@ def create_pdf(df_nav, metar_text):
         pdf.ln()
     return bytes(pdf.output())
 
-# ─── INTERFACE & CSS MOBILE ───
-st.set_page_config(page_title="SkyAssistant V40", layout="wide")
-st.markdown("""
-    <style>
-    .mobile-scroll {
-        overflow-x: auto !important;
-        display: block;
-        width: 100%;
-    }
-    .mobile-scroll > div {
-        min-width: 900px !important; /* Force la largeur pour éviter l'écrasement */
-    }
-    </style>
-""", unsafe_allow_html=True)
+# ─── INTERFACE ───
+st.set_page_config(page_title="SkyAssistant V42", layout="wide")
 
 if 'waypoints' not in st.session_state: st.session_state.waypoints = []
 
 with st.sidebar:
-    st.title("✈️ SkyAssistant V40")
+    st.title("✈️ SkyAssistant V42")
     search = st.text_input("🔍 Rechercher OACI", "").upper()
     sugg = [k for k in AIRPORTS.keys() if k.startswith(search)] if search else []
     if sugg and st.button(f"Départ : {sugg[0]}"):
@@ -136,16 +125,11 @@ with col_ctrl:
 with col_map:
     if st.session_state.waypoints:
         m = folium.Map(location=[st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"]], zoom_start=9)
-        folium.TileLayer(tiles='https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', attr='Google Satellite', name='Vue Satellite', overlay=False, control=True).add_to(m)
         folium.TileLayer('openstreetmap', name='Carte Standard').add_to(m)
         folium.PolyLine([[w["lat"], w["lon"]] for w in st.session_state.waypoints], color="red", weight=3).add_to(m)
-        num_wps = len(st.session_state.waypoints)
         for i, w in enumerate(st.session_state.waypoints):
-            icon_color = "blue" if i == 0 else ("red" if i == num_wps - 1 else "orange")
-            icon_type = "plane" if i == 0 else ("flag" if i == num_wps - 1 else "dot-circle-o")
-            folium.Marker([w["lat"], w["lon"]], popup=f"{w['name']}", icon=folium.Icon(color=icon_color, icon=icon_type, prefix="fa")).add_to(m)
-        folium.LayerControl().add_to(m)
-        st_folium(m, width="100%", height=300, key="map_v40", returned_objects=[])
+            folium.Marker([w["lat"], w["lon"]], popup=f"{w['name']}", icon=folium.Icon(color="red", icon="dot-circle-o", prefix="fa")).add_to(m)
+        st_folium(m, width="100%", height=300, key="map_v42", returned_objects=[])
 
 # ─── LOG DE NAVIGATION & PROFIL ───
 if len(st.session_state.waypoints) > 1:
@@ -158,16 +142,15 @@ if len(st.session_state.waypoints) > 1:
     for i in range(1, len(st.session_state.waypoints)):
         w1, w2 = st.session_state.waypoints[i-1], st.session_state.waypoints[i]
         wd, ws, _, src = get_wind_v27_final(w2["lat"], w2["lon"], w2["alt"], curr_t, w2.get("manual_wind"))
-        
         wa = math.radians(wd - w2["tc"]); sin_wca = (ws/tas)*math.sin(wa)
         wca = math.degrees(math.asin(sin_wca)) if abs(sin_wca) <= 1 else 0
         gs = max(20, (tas * math.cos(math.radians(wca))) - (ws * math.cos(wa)))
-        
         total_sec = (w2["dist"] / gs) * 3600
         eet_str = f"{int(total_sec//60):02d}:{int(total_sec%60):02d}"
         alt_croisiere = w2["alt"]
         toc_tod_str = ""
 
+        # TOC
         if alt_croisiere > current_altitude_at_start:
             t_climb_s = ((alt_croisiere - current_altitude_at_start) / v_climb) * 60
             dist_climb = (gs * (t_climb_s/3600))
@@ -176,11 +159,11 @@ if len(st.session_state.waypoints) > 1:
                 toc_tod_str += f"TOC: {round(dist_climb,1)}NM ({t_str}) "
                 if dist_climb < w2["dist"]:
                     dist_p.append(d_total + dist_climb); alt_p.append(alt_croisiere); terr_p.append(w1["elev"])
-                    fig.add_annotation(x=d_total + dist_climb, y=alt_croisiere, text=f"TOC ({t_str})", showarrow=True, ay=45)
+                    fig.add_annotation(x=d_total + dist_climb, y=alt_croisiere, text=f"TOC ({t_str})", showarrow=True, ay=40)
 
-        is_last = (i == len(st.session_state.waypoints) - 1)
+        # TOD
         arr_type = w2.get("arr_type", "Direct")
-        if is_last and arr_type == "Direct": arr_type = "VT (1500ft)" 
+        if (i == len(st.session_state.waypoints) - 1) and arr_type == "Direct": arr_type = "VT (1500ft)" 
 
         if arr_type != "Direct":
             offset = 1500 if "VT" in arr_type else 1000
@@ -192,12 +175,12 @@ if len(st.session_state.waypoints) > 1:
                 toc_tod_str += f"TOD: {round(dist_desc,1)}NM ({t_str})"
                 if dist_desc < w2["dist"]:
                     dist_p.append(d_total + (w2["dist"] - dist_desc)); alt_p.append(alt_croisiere); terr_p.append(w2["elev"])
-                    fig.add_annotation(x=d_total + (w2["dist"] - dist_desc), y=alt_croisiere, text=f"TOD ({t_str})", showarrow=True, ay=-45)
+                    fig.add_annotation(x=d_total + (w2["dist"] - dist_desc), y=alt_croisiere, text=f"TOD ({t_str})", showarrow=True, ay=-40)
             
             d_total += w2["dist"]
             dist_p.append(d_total); alt_p.append(alt_target); terr_p.append(w2["elev"])
             dist_p.append(d_total); alt_p.append(w2["elev"]); terr_p.append(w2["elev"])
-            fig.add_vline(x=d_total, line_width=2, line_dash="dash", line_color="orange", annotation_text=f"{arr_type}")
+            fig.add_vline(x=d_total, line_width=2, line_dash="dash", line_color="orange")
             current_altitude_at_start = w2["elev"]
         else:
             d_total += w2["dist"]
@@ -206,9 +189,8 @@ if len(st.session_state.waypoints) > 1:
 
         nav_data.append({"Branche": f"{w1['name']}➔{w2['name']}", "Vent": f"{int(wd)}/{int(ws)}kt", "Source": src, "GS": f"{int(gs)}kt", "EET": eet_str, "TOC/TOD": toc_tod_str.strip(), "Arrivée": arr_type, "Suppr": False, "_idx": i})
 
-    st.subheader("📋 Log de Navigation")
+    # AFFICHAGE TABLEAU
     df_nav = pd.DataFrame(nav_data)
-    # TABLEAU VERROUILLÉ (Seuls Branche, Arrivée et Suppr sont éditables)
     edited_log = st.data_editor(df_nav, column_config={
         "Branche": st.column_config.TextColumn("Branche", width="medium"),
         "Vent": st.column_config.TextColumn("Vent", disabled=True),
@@ -231,33 +213,35 @@ if len(st.session_state.waypoints) > 1:
                 new_wps.append(wp)
         st.session_state.waypoints = new_wps; st.rerun()
 
-    st.download_button(label="📥 Log PDF", data=create_pdf(df_nav.drop(columns=['Suppr', '_idx', 'Arrivée']), metar_val), file_name="nav_log.pdf")
-
-    # PROFIL GRAPHIQUE
+    # SECTION GRAPHIQUE FIXE (IMAGE)
+    st.subheader("📊 Profil de Vol (Griser pour faire défiler)")
+    
     fig.add_trace(go.Scatter(x=dist_p, y=terr_p, fill='tozeroy', name='Relief', line_color='sienna'))
     fig.add_trace(go.Scatter(x=dist_p, y=alt_p, name='Profil Avion', line=dict(color='royalblue', width=4)))
     
-    # CALCUL DE LA LARGEUR DYNAMIQUE : 
-    # On assure au moins 1000px pour que les textes ne se touchent jamais
-    graph_width = max(1000, len(st.session_state.waypoints) * 150)
-
+    # On force une largeur très grande pour l'image
+    img_width = 1200 
     fig.update_layout(
-        width=graph_width, # ON FORCE LA LARGEUR ICI
-        height=400,
-        xaxis_title="Distance (NM)", 
-        yaxis_title="Altitude (ft)", 
-        xaxis=dict(tickformat=".1f", fixedrange=True),
-        yaxis=dict(fixedrange=True),
-        showlegend=False,
-        margin=dict(l=40, r=40, t=20, b=40),
-        dragmode=False # Désactive le drag/zoom au niveau de Plotly
+        width=img_width, height=400,
+        xaxis_title="Distance (NM)", yaxis_title="Altitude (ft)",
+        margin=dict(l=40, r=40, t=20, b=40), showlegend=False,
+        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+        font=dict(color="white", size=14)
     )
-    
-    # AFFICHAGE AVEC SCROLLBAR HTML
-    # On n'utilise PLUS use_container_width pour que la largeur de 1000px soit respectée
-    st.markdown('<div style="overflow-x: auto; overflow-y: hidden; width: 100%;">', unsafe_allow_html=True)
-    st.plotly_chart(fig, use_container_width=False, config={
-        'staticPlot': True, 
-        'displayModeBar': False
-    })
-    st.markdown('</div>', unsafe_allow_html=True)
+
+    # Conversion en image PNG
+    try:
+        img_bytes = fig.to_image(format="png", engine="kaleido")
+        # Affichage dans un conteneur HTML avec défilement
+        st.markdown(
+            f"""
+            <div style="overflow-x: auto; white-space: nowrap; width: 100%; border: 1px solid #444; border-radius: 10px;">
+                <img src="data:image/png;base64,{pd.io.common.base64.b64encode(img_bytes).decode()}" style="width: {img_width}px; max-width: none;">
+            </div>
+            """, 
+            unsafe_allow_html=True
+        )
+    except Exception as e:
+        # Fallback si kaleido n'est pas installé
+        st.warning("Utilisation du mode interactif (installez 'kaleido' pour le mode image fixe)")
+        st.plotly_chart(fig, use_container_width=False)
