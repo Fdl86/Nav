@@ -224,4 +224,8 @@ if len(st.session_state.waypoints) > 1:
     fig.add_trace(go.Scatter(x=dist_p, y=terr_p, fill='tozeroy', name='Relief', line_color='sienna'))
     fig.add_trace(go.Scatter(x=dist_p, y=alt_p, name='Profil Avion', line=dict(color='royalblue', width=4)))
     fig.update_layout(xaxis_title="Distance (NM)", yaxis_title="Altitude (ft)", xaxis=dict(tickformat=".1f"))
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True, config={
+    'displayModeBar': False,  # Supprime la barre d'outils (zoom, pan, etc.)
+    'staticPlot': False,      # Permet de garder le survol (hover) mais bloque le resize
+    'scrollZoom': False       # Empêche de zoomer par erreur en scrollant
+    })
