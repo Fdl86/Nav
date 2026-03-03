@@ -41,14 +41,30 @@ def calculate_gs_and_wca(tas, tc, wd, ws):
     return max(20, gs), round(wca)
 
 def get_wind(lat, lon, alt_ft, time_dt):
+    # Mapping précis pour les couches AROME
     rounded_alt = int(round(alt_ft, -3))
     lv = PRESSURE_MAP.get(rounded_alt, 850)
-    p = {"latitude": lat, "longitude": lon, "hourly": f"wind_speed_{lv}hPa,wind_direction_{lv}hPa", "models": "meteofrance_seamless", "wind_speed_unit": "kn", "timezone": "UTC", "forecast_days": 1}
+    
+    p = {
+        "latitude": lat, 
+        "longitude": lon, 
+        "hourly": f"wind_speed_{lv}hPa,wind_direction_{lv}hPa", 
+        "models": "meteofrance_arome_france_hd", # ON FORCE AROME HD 2.5KM
+        "wind_speed_unit": "kn", 
+        "timezone": "UTC", 
+        "forecast_days": 1
+    }
     try:
         r = requests.get(OPEN_METEO_URL, params=p).json()
+        # Si AROME n'est pas dispo (ex: hors France), on peut mettre un fallback
+        if "hourly" not in r:
+            p["models"] = "meteofrance_seamless"
+            r = requests.get(OPEN_METEO_URL, params=p).json()
+            
         idx = min(range(len(r["hourly"]["time"])), key=lambda k: abs(datetime.fromisoformat(r["hourly"]["time"][k]) - time_dt))
         return r["hourly"][f"wind_direction_{lv}hPa"][idx], r["hourly"][f"wind_speed_{lv}hPa"][idx]
-    except: return 0, 0
+    except: 
+        return 0, 0
 
 def calculate_destination(lat, lon, bearing, dist_nm):
     R = 3440.065
