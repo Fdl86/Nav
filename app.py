@@ -6,7 +6,7 @@ import math
 import folium
 from streamlit_folium import st_folium
 import plotly.graph_objects as go
-from fpdf import FPDF, Enums
+from fpdf import FPDF
 from fpdf.enums import XPos, YPos
 import base64
 
@@ -57,22 +57,23 @@ def get_wind_v27(lat, lon, alt_ft, time_dt, manual_wind=None):
 
 # ─── FONCTION EXPORT PDF ───
 def create_pdf(df_nav, metar_text):
+    # Création du document
     pdf = FPDF(orientation='P', unit='mm', format='A4')
     pdf.add_page()
     
     # En-tête
     pdf.set_font("helvetica", 'B', 16)
     pdf.cell(0, 10, "LOG DE NAVIGATION - SKYASSISTANT", 
-             new_x=Enums.XPos.LMARGIN, new_y=Enums.YPos.NEXT, align='C')
+             new_x="LMARGIN", new_y="NEXT", align='C')
     pdf.ln(5)
     
     # Section METAR
     pdf.set_font("helvetica", 'B', 10)
-    pdf.cell(0, 8, "METAR DE DEPART :", new_x=Enums.XPos.LMARGIN, new_y=Enums.YPos.NEXT)
+    pdf.cell(0, 8, "METAR DE DEPART :", new_x="LMARGIN", new_y="NEXT")
     
     pdf.set_font("helvetica", size=9)
-    # On force l'encodage pour éviter tout plantage sur les caractères spéciaux
-    clean_metar = metar_text.encode('ascii', 'ignore').decode('ascii')
+    # Nettoyage ASCII strict
+    clean_metar = str(metar_text).encode('ascii', 'ignore').decode('ascii')
     pdf.multi_cell(0, 6, clean_metar, border=1)
     pdf.ln(10)
     
@@ -80,7 +81,8 @@ def create_pdf(df_nav, metar_text):
     pdf.set_font("helvetica", 'B', 9)
     pdf.set_fill_color(220, 220, 220)
     
-    w = [45, 35, 25, 25, 60] 
+    # Largeurs (Total 190mm pour A4)
+    w = [45, 35, 20, 25, 65] 
     cols = ["Branche", "Vent", "GS", "EET", "TOC/TOD"]
     
     for i in range(len(cols)):
@@ -90,12 +92,12 @@ def create_pdf(df_nav, metar_text):
     # Lignes du tableau
     pdf.set_font("helvetica", size=9)
     for _, row in df_nav.iterrows():
-        # Nettoyage ASCII pour chaque cellule
+        # Nettoyage de chaque champ
         txt_br = str(row['Branche']).replace('➔', '->').encode('ascii', 'ignore').decode('ascii')
-        txt_v = str(row['Vent']).encode('ascii', 'ignore').decode('ascii')
-        txt_gs = str(row['GS']).encode('ascii', 'ignore').decode('ascii')
-        txt_eet = str(row['EET']).encode('ascii', 'ignore').decode('ascii')
-        txt_tt = str(row['TOC/TOD']).encode('ascii', 'ignore').decode('ascii')
+        txt_v = str(row.get('Vent', 'N/A')).encode('ascii', 'ignore').decode('ascii')
+        txt_gs = str(row.get('GS', 'N/A')).encode('ascii', 'ignore').decode('ascii')
+        txt_eet = str(row.get('EET', 'N/A')).encode('ascii', 'ignore').decode('ascii')
+        txt_tt = str(row.get('TOC/TOD', 'N/A')).encode('ascii', 'ignore').decode('ascii')
         
         pdf.cell(w[0], 10, txt_br, border=1)
         pdf.cell(w[1], 10, txt_v, border=1)
@@ -104,7 +106,7 @@ def create_pdf(df_nav, metar_text):
         pdf.cell(w[4], 10, txt_tt, border=1)
         pdf.ln()
 
-    # Transformation explicite en bytes pour Streamlit
+    # Transformation en bytes pour Streamlit
     return bytes(pdf.output())
 
 # ─── INTERFACE ───
