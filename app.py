@@ -179,7 +179,9 @@ if len(st.session_state.waypoints) > 1:
                 tt_str += f"TOD:{round(d_desc,1)}NM"
                 if d_desc < w2["dist"]:
                     dist_p.append(d_total + (w2["dist"] - d_desc)); alt_p.append(alt_crois); terr_p.append(w2["elev"])
-                    fig.add_annotation(x=d_total + (w2["dist"] - d_desc), y=alt_crois, text=f"TOD {round(d_desc,1)}NM ({t_de_str})", showarrow=True, ay=-45)
+                    label_dest = "VT" if "VT" in at else "TDP"
+                fig.add_annotation(x=d_total, y=alt_t, text=f"<b>{label_dest} {w2['name']}</b>", showarrow=False, yshift=15, font=dict(color="orange", size=12)
+            fig.add_annotation(x=d_total + (w2["dist"] - d_desc), y=alt_crois, text=f"TOD {round(d_desc,1)}NM ({t_de_str})", showarrow=True, ay=-45)
             d_total += w2["dist"]; dist_p.append(d_total); alt_p.append(alt_t); terr_p.append(w2["elev"])
             dist_p.append(d_total); alt_p.append(w2["elev"]); terr_p.append(w2["elev"])
             fig.add_vline(x=d_total, line_width=2, line_dash="dash", line_color="orange")
