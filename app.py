@@ -123,7 +123,7 @@ with col_map:
         m = folium.Map(location=[st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"]], zoom_start=9)
         folium.PolyLine([[w["lat"], w["lon"]] for w in st.session_state.waypoints], color="red", weight=3).add_to(m)
         # FLUIDITÉ : Ajout de returning_objects=[] pour stopper les rechargements sur mouvement de carte
-        st_folium(m, width="100%", height=350, key="map_v33", returning_objects=[])
+        st_folium(m, width="100%", height=350, key="map_v33", returned_objects=[])
 
 # ─── LOG DE NAVIGATION & PROFIL ───
 if len(st.session_state.waypoints) > 1:
