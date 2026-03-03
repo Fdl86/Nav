@@ -224,8 +224,29 @@ if len(st.session_state.waypoints) > 1:
     fig.add_trace(go.Scatter(x=dist_p, y=terr_p, fill='tozeroy', name='Relief', line_color='sienna'))
     fig.add_trace(go.Scatter(x=dist_p, y=alt_p, name='Profil Avion', line=dict(color='royalblue', width=4)))
     fig.update_layout(xaxis_title="Distance (NM)", yaxis_title="Altitude (ft)", xaxis=dict(tickformat=".1f"))
+    
+    # Conteneur pour le défilement horizontal sur mobile
+    # On force une largeur minimale de 800px dans un bloc CSS pour éviter l'écrasement
+    st.markdown(
+        """
+        <style>
+        .scroll-container {
+            overflow-x: auto;
+            white-space: nowrap;
+        }
+        .scroll-container > div {
+            min-width: 800px;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+    
+    st.markdown('<div class="scroll-container">', unsafe_allow_html=True)
     st.plotly_chart(fig, use_container_width=True, config={
-    'displayModeBar': False,  # Supprime la barre d'outils (zoom, pan, etc.)
-    'staticPlot': False,      # Permet de garder le survol (hover) mais bloque le resize
-    'scrollZoom': False       # Empêche de zoomer par erreur en scrollant
+        'displayModeBar': False,
+        'staticPlot': False,
+        'scrollZoom': False,
+        'responsive': True
     })
+    st.markdown('</div>', unsafe_allow_html=True)
