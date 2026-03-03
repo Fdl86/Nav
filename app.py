@@ -40,22 +40,41 @@ def get_metar(icao):
         return r.text.split('\n')[1] if r.status_code == 200 else "METAR indisponible"
     except: return "Erreur METAR"
 
-def get_wind_v27(lat, lon, alt_ft, time_dt, manual_wind=None):
-    if manual_wind: return manual_wind['wd'], manual_wind['ws'], "Manuel", "User"
+def get_wind_v27_final(lat, lon, alt_ft, time_dt, manual_wind=None):
+    if manual_wind: 
+        return manual_wind['wd'], manual_wind['ws'], "Manuel", "User"
+    
     target = min(PRESSURE_MAP.keys(), key=lambda x: abs(x - alt_ft))
     lv = PRESSURE_MAP[target]
-    params = {"latitude": lat, "longitude": lon, "hourly": f"wind_speed_{lv}hPa,wind_direction_{lv}hPa",
-              "models": "icon_d2,meteofrance_arome_france_hd,gfs_seamless", "wind_speed_unit": "kn", "timezone": "UTC"}
+    
+    params = {
+        "latitude": lat, "longitude": lon, 
+        "hourly": f"wind_speed_{lv}hPa,wind_direction_{lv}hPa",
+        "models": "icon_d2,meteofrance_arome_france_hd,gfs_seamless", 
+        "wind_speed_unit": "kn", "timezone": "UTC"
+    }
+    
     try:
         r = requests.get(OPEN_METEO_URL, params=params).json()
         h = r.get("hourly", {})
-        if h.get(f"wind_speed_{lv}hPa_icon_d2", [None])[0]: ws, wd, src = h[f"wind_speed_{lv}hPa_icon_d2"], h[f"wind_direction_{lv}hPa_icon_d2"], "ICON-D2"
-        elif h.get(f"wind_speed_{lv}hPa_meteofrance_arome_france_hd", [None])[0]: ws, wd, src = h[f"wind_speed_{lv}hPa_meteofrance_arome_france_hd"], h[f"wind_direction_{lv}hPa_meteofrance_arome_france_hd"], "AROME HD"
-        else: ws, wd, src = h[f"wind_speed_{lv}hPa_gfs_seamless"], h[f"wind_direction_{lv}hPa_gfs_seamless"], "GFS"
-        idx = min(range(len(h["time"])), key=lambda k: abs(datetime.fromisoformat(h["time"][k]) - time_dt))
+        
+        # Sélection du meilleur modèle disponible
+        if h.get(f"wind_speed_{lv}hPa_icon_d2", [None])[0] is not None:
+            ws, wd, src = h[f"wind_speed_{lv}hPa_icon_d2"], h[f"wind_direction_{lv}hPa_icon_d2"], "ICON-D2"
+        elif h.get(f"wind_speed_{lv}hPa_meteofrance_arome_france_hd", [None])[0] is not None:
+            ws, wd, src = h[f"wind_speed_{lv}hPa_meteofrance_arome_france_hd"], h[f"wind_direction_{lv}hPa_meteofrance_arome_france_hd"], "AROME HD"
+        else:
+            ws, wd, src = h[f"wind_speed_{lv}hPa_gfs_seamless"], h[f"wind_direction_{lv}hPa_gfs_seamless"], "GFS"
+        
+        # CORRECTION ICI : Conversion propre pour la comparaison de temps
+        # On s'assure que les deux dates comparées sont au même format
+        idx = min(range(len(h["time"])), key=lambda k: abs(dt.datetime.fromisoformat(h["time"][k]).replace(tzinfo=dt.timezone.utc) - time_dt))
+        
         return wd[idx], ws[idx], h["time"][0], src
-    except: return 0, 0, "N/A", "Err"
-
+    except Exception as e:
+        print(f"Erreur Vent: {e}")
+        return 0, 0, "N/A", "Err"
+        
 # ─── FONCTION EXPORT PDF ───
 def create_pdf(df_nav, metar_text):
     # Création du document
