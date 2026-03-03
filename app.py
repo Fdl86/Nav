@@ -236,13 +236,21 @@ if len(st.session_state.waypoints) > 1:
     # PROFIL GRAPHIQUE
     fig.add_trace(go.Scatter(x=dist_p, y=terr_p, fill='tozeroy', name='Relief', line_color='sienna'))
     fig.add_trace(go.Scatter(x=dist_p, y=alt_p, name='Profil Avion', line=dict(color='royalblue', width=4)))
-    fig.update_layout(xaxis_title="Distance (NM)", yaxis_title="Altitude (ft)", xaxis=dict(tickformat=".1f"), showlegend=False)
     
-    # CONTENEUR SCROLLABLE POUR MOBILE
+    # On fixe les marges pour gagner de la place sur mobile
+    fig.update_layout(
+        xaxis_title="Distance (NM)", 
+        yaxis_title="Altitude (ft)", 
+        xaxis=dict(tickformat=".1f", fixedrange=True), # Bloque le zoom X
+        yaxis=dict(fixedrange=True),                   # Bloque le zoom Y
+        showlegend=False,
+        margin=dict(l=10, r=10, t=10, b=10)
+    )
+    
+    # CONTENEUR SCROLLABLE AVEC GRAPHIQUE STATIQUE
     st.markdown('<div class="mobile-scroll">', unsafe_allow_html=True)
     st.plotly_chart(fig, use_container_width=True, config={
-        'displayModeBar': False,  # Pas d'options de resize/zoom gênantes
-        'staticPlot': False,      # On garde le hover (infos au survol)
-        'scrollZoom': False       # Pas de zoom molette
+        'staticPlot': True,  # CE PARAMÈTRE BLOQUE TOUT (Zoom, Drag, Resize)
+        'displayModeBar': False
     })
     st.markdown('</div>', unsafe_allow_html=True)
