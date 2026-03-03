@@ -57,39 +57,41 @@ def get_wind_v27(lat, lon, alt_ft, time_dt, manual_wind=None):
 def create_pdf(df_nav, metar_text):
     pdf = FPDF()
     pdf.add_page()
-    # On utilise 'helvetica' (standard fpdf2) au lieu de 'Arial'
+    
+    # 1. Titre
     pdf.set_font("helvetica", 'B', 16)
-    pdf.cell(0, 10, "Log de Navigation - SkyAssistant V27", ln=True, align='C')
+    pdf.cell(0, 10, "Log de Navigation - SkyAssistant", ln=True, align='C')
+    pdf.ln(5)
     
+    # 2. METAR (Nettoyé pour éviter les caractères invisibles qui bloquent le PDF)
     pdf.set_font("helvetica", size=10)
-    pdf.ln(5)
-    # Remplacement des caractères qui posent problème (comme la flèche ➔) 
-    # car les polices standards PDF ne supportent pas toujours l'unicode complexe
-    clean_metar = metar_text.replace('➔', '->')
-    pdf.multi_cell(0, 10, f"METAR Depart: {clean_metar}")
+    clean_metar = str(metar_text).encode('latin-1', 'ignore').decode('latin-1')
+    pdf.multi_cell(0, 8, f"METAR Depart: {clean_metar}")
     pdf.ln(5)
     
-    # Header Tableau
+    # 3. Header Tableau
     pdf.set_fill_color(200, 220, 255)
+    pdf.set_font("helvetica", 'B', 9)
     cols = ["Branche", "Vent", "GS", "EET", "TOC/TOD"]
     for col in cols:
-        pdf.cell(38, 10, col, border=1, fill=True)
+        pdf.cell(38, 10, col, border=1, fill=True, align='C')
     pdf.ln()
     
-    # Corps Tableau
+    # 4. Corps Tableau
     pdf.set_font("helvetica", size=9)
     for _, row in df_nav.iterrows():
-        # Nettoyage de la flèche pour le PDF
-        txt_branche = str(row['Branche']).replace('➔', '->')
-        pdf.cell(38, 10, txt_branche, border=1)
+        # On remplace la flèche ➔ par -> pour le PDF
+        txt_br = str(row['Branche']).replace('➔', '->').encode('latin-1', 'ignore').decode('latin-1')
+        pdf.cell(38, 10, txt_br, border=1)
         pdf.cell(38, 10, str(row['Vent']), border=1)
         pdf.cell(38, 10, str(row['GS']), border=1)
         pdf.cell(38, 10, str(row['EET']), border=1)
-        pdf.cell(38, 10, str(row['TOC/TOD']), border=1)
+        # On limite TOC/TOD pour que ça ne déborde pas de la cellule
+        txt_tt = str(row['TOC/TOD']).replace('NM', '').encode('latin-1', 'ignore').decode('latin-1')
+        pdf.cell(38, 10, txt_tt, border=1)
         pdf.ln()
     
-    # LA MODIFICATION MAJEURE EST ICI :
-    # fpdf2 retourne directement des bytes avec output()
+    # 5. GÉNÉRATION : fpdf2 nécessite output() sans arguments pour renvoyer les bytes
     return pdf.output()
 
 # ─── INTERFACE ───
