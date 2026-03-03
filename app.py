@@ -82,12 +82,12 @@ def create_pdf(df_nav, metar_text):
     return bytes(pdf.output())
 
 # ─── INTERFACE ───
-st.set_page_config(page_title="SkyAssistant V45", layout="wide")
+st.set_page_config(page_title="SkyAssistant V46", layout="wide")
 
 if 'waypoints' not in st.session_state: st.session_state.waypoints = []
 
 with st.sidebar:
-    st.title("✈️ SkyAssistant V45")
+    st.title("✈️ SkyAssistant V46")
     search = st.text_input("🔍 Rechercher OACI", "").upper()
     sugg = [k for k in AIRPORTS.keys() if k.startswith(search)] if search else []
     if sugg and st.button(f"Départ : {sugg[0]}"):
@@ -128,10 +128,12 @@ with col_map:
         folium.TileLayer(tiles='https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', attr='Google Satellite', name='Vue Satellite', overlay=False, control=True).add_to(m)
         folium.TileLayer('openstreetmap', name='Carte Standard').add_to(m)
         folium.PolyLine([[w["lat"], w["lon"]] for w in st.session_state.waypoints], color="red", weight=3).add_to(m)
+        num_w = len(st.session_state.waypoints)
         for i, w in enumerate(st.session_state.waypoints):
-            icon_c = "blue" if i == 0 else ("red" if i == len(st.session_state.waypoints)-1 else "orange")
-            folium.Marker([w["lat"], w["lon"]], popup=f"{w['name']}", icon=folium.Icon(color=icon_c, icon="dot-circle-o", prefix="fa")).add_to(m)
-        folium.LayerControl().add_to(m); st_folium(m, width="100%", height=300, key="map_v45", returned_objects=[])
+            icon_c = "blue" if i == 0 else ("red" if i == num_w-1 else "orange")
+            icon_t = "plane" if i == 0 else ("flag" if i == num_w-1 else "dot-circle-o")
+            folium.Marker([w["lat"], w["lon"]], popup=f"{w['name']}", icon=folium.Icon(color=icon_c, icon=icon_t, prefix="fa")).add_to(m)
+        folium.LayerControl().add_to(m); st_folium(m, width="100%", height=300, key="map_v46", returned_objects=[])
 
 # ─── LOG DE NAVIGATION & PROFIL ───
 if len(st.session_state.waypoints) > 1:
@@ -151,15 +153,18 @@ if len(st.session_state.waypoints) > 1:
         fuel_branch = round(hours * fuel_flow, 1)
         alt_crois = w2["alt"]; tt_str = ""
 
+        # TOC
         if alt_crois > current_alt:
             t_climb = ((alt_crois - current_alt) / v_climb) * 60
             d_climb = (gs * (t_climb/3600))
             if d_climb > 0.1:
+                t_cl_str = f"{int(t_climb//60):02d}:{int(t_climb%60):02d}"
                 tt_str += f"TOC:{round(d_climb,1)}NM "
                 if d_climb < w2["dist"]:
                     dist_p.append(d_total + d_climb); alt_p.append(alt_crois); terr_p.append(w1["elev"])
-                    fig.add_annotation(x=d_total + d_climb, y=alt_crois, text="TOC", showarrow=True, ay=40)
+                    fig.add_annotation(x=d_total + d_climb, y=alt_crois, text=f"TOC ({t_cl_str})", showarrow=True, ay=45)
 
+        # TOD
         at = w2.get("arr_type", "Direct")
         if (i == len(st.session_state.waypoints)-1) and at == "Direct": at = "VT (1500ft)" 
 
@@ -168,10 +173,11 @@ if len(st.session_state.waypoints) > 1:
             t_desc = ((alt_crois - alt_t) / v_descent) * 60 if alt_crois > alt_t else 0
             d_desc = (gs * (t_desc/3600))
             if d_desc > 0.1:
+                t_de_str = f"{int(t_desc//60):02d}:{int(t_desc%60):02d}"
                 tt_str += f"TOD:{round(d_desc,1)}NM"
                 if d_desc < w2["dist"]:
                     dist_p.append(d_total + (w2["dist"] - d_desc)); alt_p.append(alt_crois); terr_p.append(w2["elev"])
-                    fig.add_annotation(x=d_total + (w2["dist"] - d_desc), y=alt_crois, text="TOD", showarrow=True, ay=-40)
+                    fig.add_annotation(x=d_total + (w2["dist"] - d_desc), y=alt_crois, text=f"TOD ({t_de_str})", showarrow=True, ay=-45)
             d_total += w2["dist"]; dist_p.append(d_total); alt_p.append(alt_t); terr_p.append(w2["elev"])
             dist_p.append(d_total); alt_p.append(w2["elev"]); terr_p.append(w2["elev"])
             fig.add_vline(x=d_total, line_width=2, line_dash="dash", line_color="orange")
@@ -193,7 +199,6 @@ if len(st.session_state.waypoints) > 1:
 
     st.subheader("📋 Log de Navigation")
     df_nav = pd.DataFrame(nav_data)
-    # CONFIGURATION DES LARGEURS DE COLONNES
     edited_log = st.data_editor(df_nav, column_config={
         "Branche": st.column_config.TextColumn("Branche", width="small"),
         "Vent": st.column_config.TextColumn("Vent", width="medium", disabled=True),
