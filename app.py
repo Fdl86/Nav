@@ -7,7 +7,9 @@ import folium
 from streamlit_folium import st_folium
 import plotly.graph_objects as go
 from fpdf import FPDF
+from fpdf.enums import XPos, YPos
 import base64
+
 
 # ─── CONFIGURATION ───
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
@@ -55,29 +57,26 @@ def get_wind_v27(lat, lon, alt_ft, time_dt, manual_wind=None):
 
 # ─── FONCTION EXPORT PDF ───
 def create_pdf(df_nav, metar_text):
-    # Initialisation PDF
     pdf = FPDF(orientation='P', unit='mm', format='A4')
     pdf.add_page()
     
-    # Configuration des polices (Standard PDF ne supporte que latin-1)
     pdf.set_font("helvetica", 'B', 16)
-    pdf.cell(0, 10, "LOG DE NAVIGATION - SKYASSISTANT", ln=True, align='C')
+    # Remplacement de ln=True par les nouvelles constantes pour éviter les Warnings
+    pdf.cell(0, 10, "LOG DE NAVIGATION - SKYASSISTANT", 
+             new_x=XPos.LMARGIN, new_y=YPos.NEXT, align='C')
     pdf.ln(5)
     
-    # Section METAR
     pdf.set_font("helvetica", 'B', 10)
-    pdf.cell(0, 8, "METAR DE DEPART :", ln=True)
+    pdf.cell(0, 8, "METAR DE DEPART :", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    
     pdf.set_font("helvetica", size=9)
-    # Nettoyage strict des caractères non-ASCII
     clean_metar = metar_text.encode('ascii', 'ignore').decode('ascii')
     pdf.multi_cell(0, 6, clean_metar, border=1)
     pdf.ln(10)
     
-    # Tableau de Navigation
     pdf.set_font("helvetica", 'B', 9)
     pdf.set_fill_color(220, 220, 220)
     
-    # Largeurs de colonnes ajustées (Total 190mm)
     w = [45, 35, 25, 25, 60] 
     cols = ["Branche", "Vent", "GS", "EET", "TOC/TOD"]
     
@@ -87,7 +86,6 @@ def create_pdf(df_nav, metar_text):
     
     pdf.set_font("helvetica", size=9)
     for _, row in df_nav.iterrows():
-        # On remplace les caractères spéciaux par du texte standard
         txt_br = str(row['Branche']).replace('➔', '->').encode('ascii', 'ignore').decode('ascii')
         txt_v = str(row['Vent']).encode('ascii', 'ignore').decode('ascii')
         txt_gs = str(row['GS']).encode('ascii', 'ignore').decode('ascii')
@@ -101,8 +99,8 @@ def create_pdf(df_nav, metar_text):
         pdf.cell(w[4], 10, txt_tt, border=1)
         pdf.ln()
 
-    # Retourne le flux binaire directement
-    return pdf.output()
+    # CRUCIAL : On transforme le bytearray en bytes pour Streamlit
+    return bytes(pdf.output())
 
 # ─── INTERFACE ───
 st.set_page_config(page_title="SkyAssistant V27", layout="wide")
@@ -159,7 +157,7 @@ with col_map:
 # ─── LOG & PROFIL AVEC PALIERS ───
 if len(st.session_state.waypoints) > 1:
     st.markdown("---")
-    curr_t, mv = datetime.utcnow(), -1.2
+    curr_t = datetime.now(datetime.UTC)
     nav_rows, dist_p, alt_p, terr_p = [], [0], [], [st.session_state.waypoints[0]["elev"]]
     alt_p.append(st.session_state.waypoints[0]["elev"])
 
