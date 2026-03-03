@@ -164,7 +164,7 @@ with col_map:
 # ─── LOG & PROFIL AVEC PALIERS ───
 if len(st.session_state.waypoints) > 1:
     st.markdown("---")
-    curr_t = datetime.datetime.now(datetime.timezone.utc)
+    curr_t = datetime.now(timezone.utc)
     nav_rows, dist_p, alt_p, terr_p = [], [0], [], [st.session_state.waypoints[0]["elev"]]
     alt_p.append(st.session_state.waypoints[0]["elev"])
 
