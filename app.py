@@ -57,11 +57,16 @@ def get_wind_v27(lat, lon, alt_ft, time_dt, manual_wind=None):
 def create_pdf(df_nav, metar_text):
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_font("Arial", 'B', 16)
-    pdf.cell(200, 10, "Log de Navigation - SkyAssistant V27", ln=True, align='C')
-    pdf.set_font("Arial", size=10)
+    # On utilise 'helvetica' (standard fpdf2) au lieu de 'Arial'
+    pdf.set_font("helvetica", 'B', 16)
+    pdf.cell(0, 10, "Log de Navigation - SkyAssistant V27", ln=True, align='C')
+    
+    pdf.set_font("helvetica", size=10)
     pdf.ln(5)
-    pdf.multi_cell(0, 10, f"METAR Depart: {metar_text}")
+    # Remplacement des caractères qui posent problème (comme la flèche ➔) 
+    # car les polices standards PDF ne supportent pas toujours l'unicode complexe
+    clean_metar = metar_text.replace('➔', '->')
+    pdf.multi_cell(0, 10, f"METAR Depart: {clean_metar}")
     pdf.ln(5)
     
     # Header Tableau
@@ -72,15 +77,20 @@ def create_pdf(df_nav, metar_text):
     pdf.ln()
     
     # Corps Tableau
+    pdf.set_font("helvetica", size=9)
     for _, row in df_nav.iterrows():
-        pdf.cell(38, 10, str(row['Branche']), border=1)
+        # Nettoyage de la flèche pour le PDF
+        txt_branche = str(row['Branche']).replace('➔', '->')
+        pdf.cell(38, 10, txt_branche, border=1)
         pdf.cell(38, 10, str(row['Vent']), border=1)
         pdf.cell(38, 10, str(row['GS']), border=1)
         pdf.cell(38, 10, str(row['EET']), border=1)
-        pdf.cell(38, 10, str(row['TOC/TOD'][:15]), border=1) # Tronqué pour largeur
+        pdf.cell(38, 10, str(row['TOC/TOD']), border=1)
         pdf.ln()
     
-    return pdf.output(dest='S').encode('latin-1')
+    # LA MODIFICATION MAJEURE EST ICI :
+    # fpdf2 retourne directement des bytes avec output()
+    return pdf.output()
 
 # ─── INTERFACE ───
 st.set_page_config(page_title="SkyAssistant V27", layout="wide")
