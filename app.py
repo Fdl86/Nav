@@ -180,7 +180,7 @@ if len(st.session_state.waypoints) > 1:
             # Point final au sol
             dist_p.append(d_total); alt_p.append(w2["elev"]); terr_p.append(w2["elev"])
             # LIGNE VERTICALE TERRAIN (ORANGE POINTILLÉ)
-            fig.add_vline(x=d_total, line_width=2, line_dash="dash", line_color="orange", annotation_text="Vertivale Terrain")
+            fig.add_vline(x=d_total, line_width=2, line_dash="dash", line_color="orange", annotation_text="Verticale Terrain")
         else:
             dist_p.append(d_total); alt_p.append(alt_croisiere); terr_p.append(w2["elev"])
         
