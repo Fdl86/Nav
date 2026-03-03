@@ -27,44 +27,39 @@ def load_airports():
 AIRPORTS = load_airports()
 
 # ─── MOTEUR V20 : SÉLECTEUR DE MODÈLE HD ───
-def get_wind_v20(lat, lon, alt_ft, time_dt):
+def get_wind_v21(lat, lon, alt_ft, time_dt):
     target = min(PRESSURE_MAP.keys(), key=lambda x: abs(x - alt_ft))
     lv = PRESSURE_MAP[target]
     
-    # On interroge AROME (Windy) et ICON-D2 (Actualisation rapide)
+    # On demande les 3 modèles d'un coup pour comparer
     params = {
         "latitude": lat, "longitude": lon,
         "hourly": f"wind_speed_{lv}hPa,wind_direction_{lv}hPa",
-        "models": "meteofrance_arome_france_hd,icon_d2",
-        "wind_speed_unit": "kn", "timezone": "UTC", "forecast_days": 1
+        "models": "icon_d2,meteofrance_arome_france_hd,gfs_seamless",
+        "wind_speed_unit": "kn", "timezone": "UTC"
     }
     
     try:
         r = requests.get(OPEN_METEO_URL, params=params).json()
         h = r.get("hourly", {})
         
-        # Clés spécifiques aux modèles
-        key_ws_arome = f"wind_speed_{lv}hPa_meteofrance_arome_france_hd"
-        key_wd_arome = f"wind_direction_{lv}hPa_meteofrance_arome_france_hd"
-        key_ws_icon = f"wind_speed_{lv}hPa_icon_d2"
-        key_wd_icon = f"wind_direction_{lv}hPa_icon_d2"
-
-        # Priorité : AROME si dispo et non nul, sinon ICON-D2
-        if key_ws_arome in h and h[key_ws_arome][0] is not None:
-            ws_list, wd_list = h[key_ws_arome], h[key_wd_arome]
-            source = "AROME HD"
-        elif key_ws_icon in h and h[key_ws_icon][0] is not None:
-            ws_list, wd_list = h[key_ws_icon], h[key_wd_icon]
-            source = "ICON-D2 (Frais)"
-        else:
-            return 0, 0, "N/A", "Aucun modèle HD"
-
-        run_time = h.get("time", ["N/A"])[0]
-        idx = min(range(len(h["time"])), key=lambda k: abs(datetime.fromisoformat(h["time"][k]) - time_dt))
+        # 1. On tente ICON-D2 (Le plus frais)
+        ws_icon = h.get(f"wind_speed_{lv}hPa_icon_d2", [None])[0]
+        if ws_icon is not None and ws_icon > 0.1:
+            ws, wd, src = h[f"wind_speed_{lv}hPa_icon_d2"], h[f"wind_direction_{lv}hPa_icon_d2"], "ICON-D2"
         
-        return wd_list[idx], ws_list[idx], run_time, source
+        # 2. Sinon on tente AROME HD
+        elif h.get(f"wind_speed_{lv}hPa_meteofrance_arome_france_hd", [None])[0] is not None:
+            ws, wd, src = h[f"wind_speed_{lv}hPa_meteofrance_arome_france_hd"], h[f"wind_direction_{lv}hPa_meteofrance_arome_france_hd"], "AROME HD"
+        
+        # 3. En dernier recours, le modèle global (Garantit qu'on n'a pas 0)
+        else:
+            ws, wd, src = h[f"wind_speed_{lv}hPa_gfs_seamless"], h[f"wind_direction_{lv}hPa_gfs_seamless"], "GFS Global"
+
+        idx = min(range(len(h["time"])), key=lambda k: abs(datetime.fromisoformat(h["time"][k]) - time_dt))
+        return wd[idx], ws[idx], h["time"][0], src
     except:
-        return 0, 0, "Erreur", "N/A"
+        return 0, 0, "N/A", "Erreur"
 
 # ─── LOGIQUE GÉO ───
 def calculate_gs_and_wca(tas, tc, wd, ws):
