@@ -229,25 +229,35 @@ if len(st.session_state.waypoints) > 1:
         margin=dict(l=40, r=40, t=20, b=40), showlegend=False
     )
 
-    # LE BOUCLIER ANTI-ZOOM : On crée un conteneur avec un calque invisible par-dessus
+    # ─── SECTION PROFIL (SIMPLE & BLINDÉ) ───
+    st.subheader("📊 Profil de Vol")
+
+    # On prépare le graphique
+    fig.add_trace(go.Scatter(x=dist_p, y=terr_p, fill='tozeroy', name='Relief', line_color='sienna'))
+    fig.add_trace(go.Scatter(x=dist_p, y=alt_p, name='Profil Avion', line=dict(color='royalblue', width=4)))
+    
+    # Largeur fixe pour éviter l'écrasement sur mobile
+    graph_width = 1000 
+
+    fig.update_layout(
+        width=graph_width,
+        height=400,
+        xaxis=dict(fixedrange=True, tickformat=".1f"), # Bloque le zoom axe X
+        yaxis=dict(fixedrange=True),                   # Bloque le zoom axe Y
+        margin=dict(l=40, r=40, t=20, b=40),
+        showlegend=False
+    )
+
+    # Le conteneur magique : simple, sans texte parasite
     st.markdown(
-        f"""
-        <div style="overflow-x: auto; width: 100%; position: relative; border: 1px solid #444; border-radius: 10px;">
-            <div style="
-                position: absolute; 
-                top: 0; left: 0; 
-                width: {graph_width}px; height: 100%; 
-                z-index: 10; 
-                background: rgba(0,0,0,0);
-                cursor: grab;">
-            </div>
-            
-            <div style="width: {graph_width}px;">
-        """, 
+        f'<div style="overflow-x: auto; overflow-y: hidden; -webkit-overflow-scrolling: touch; width: 100%;">', 
         unsafe_allow_html=True
     )
     
-    # On affiche le graphique normalement (il sera sous le bouclier)
-    st.plotly_chart(fig, use_container_width=False, config={'displayModeBar': False})
+    st.plotly_chart(fig, use_container_width=False, config={
+        'staticPlot': True,         # Rend le graphique inerte (comme une image)
+        'displayModeBar': False,    # Cache les outils de zoom
+        'responsive': False         # Empêche le redimensionnement auto
+    })
     
-    st.markdown("</div></div>", unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
