@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 import pandas as pd
+import datetime as dt
 from datetime import datetime
 import math
 import folium
@@ -164,7 +165,7 @@ with col_map:
 # ─── LOG & PROFIL AVEC PALIERS ───
 if len(st.session_state.waypoints) > 1:
     st.markdown("---")
-    curr_t = datetime.now(timezone.utc)
+    curr_t = dt.datetime.now(dt.timezone.utc)
     nav_rows, dist_p, alt_p, terr_p = [], [0], [], [st.session_state.waypoints[0]["elev"]]
     alt_p.append(st.session_state.waypoints[0]["elev"])
 
