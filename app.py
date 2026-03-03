@@ -8,9 +8,7 @@ import folium
 from streamlit_folium import st_folium
 import plotly.graph_objects as go
 from fpdf import FPDF
-from fpdf.enums import XPos, YPos
 import base64
-
 
 # ─── CONFIGURATION ───
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
@@ -58,7 +56,6 @@ def get_wind_v27_final(lat, lon, alt_ft, time_dt, manual_wind=None):
         r = requests.get(OPEN_METEO_URL, params=params).json()
         h = r.get("hourly", {})
         
-        # Sélection du meilleur modèle disponible
         if h.get(f"wind_speed_{lv}hPa_icon_d2", [None])[0] is not None:
             ws, wd, src = h[f"wind_speed_{lv}hPa_icon_d2"], h[f"wind_direction_{lv}hPa_icon_d2"], "ICON-D2"
         elif h.get(f"wind_speed_{lv}hPa_meteofrance_arome_france_hd", [None])[0] is not None:
@@ -66,42 +63,31 @@ def get_wind_v27_final(lat, lon, alt_ft, time_dt, manual_wind=None):
         else:
             ws, wd, src = h[f"wind_speed_{lv}hPa_gfs_seamless"], h[f"wind_direction_{lv}hPa_gfs_seamless"], "GFS"
         
-        # CORRECTION ICI : Conversion propre pour la comparaison de temps
-        # On s'assure que les deux dates comparées sont au même format
         idx = min(range(len(h["time"])), key=lambda k: abs(dt.datetime.fromisoformat(h["time"][k]).replace(tzinfo=dt.timezone.utc) - time_dt))
         
         return wd[idx], ws[idx], h["time"][0], src
     except Exception as e:
-        print(f"Erreur Vent: {e}")
         return 0, 0, "N/A", "Err"
-        
+
 # ─── FONCTION EXPORT PDF ───
 def create_pdf(df_nav, metar_text):
-    # Création du document
     pdf = FPDF(orientation='P', unit='mm', format='A4')
     pdf.add_page()
     
-    # En-tête
     pdf.set_font("helvetica", 'B', 16)
-    pdf.cell(0, 10, "LOG DE NAVIGATION - SKYASSISTANT", 
-             new_x="LMARGIN", new_y="NEXT", align='C')
+    pdf.cell(0, 10, "LOG DE NAVIGATION - SKYASSISTANT", new_x="LMARGIN", new_y="NEXT", align='C')
     pdf.ln(5)
     
-    # Section METAR
     pdf.set_font("helvetica", 'B', 10)
     pdf.cell(0, 8, "METAR DE DEPART :", new_x="LMARGIN", new_y="NEXT")
     
     pdf.set_font("helvetica", size=9)
-    # Nettoyage ASCII strict
     clean_metar = str(metar_text).encode('ascii', 'ignore').decode('ascii')
     pdf.multi_cell(0, 6, clean_metar, border=1)
     pdf.ln(10)
     
-    # Header Tableau
     pdf.set_font("helvetica", 'B', 9)
     pdf.set_fill_color(220, 220, 220)
-    
-    # Largeurs (Total 190mm pour A4)
     w = [45, 35, 20, 25, 65] 
     cols = ["Branche", "Vent", "GS", "EET", "TOC/TOD"]
     
@@ -109,10 +95,8 @@ def create_pdf(df_nav, metar_text):
         pdf.cell(w[i], 10, cols[i], border=1, fill=True, align='C')
     pdf.ln()
     
-    # Lignes du tableau
     pdf.set_font("helvetica", size=9)
     for _, row in df_nav.iterrows():
-        # Nettoyage de chaque champ
         txt_br = str(row['Branche']).replace('➔', '->').encode('ascii', 'ignore').decode('ascii')
         txt_v = str(row.get('Vent', 'N/A')).encode('ascii', 'ignore').decode('ascii')
         txt_gs = str(row.get('GS', 'N/A')).encode('ascii', 'ignore').decode('ascii')
@@ -126,15 +110,14 @@ def create_pdf(df_nav, metar_text):
         pdf.cell(w[4], 10, txt_tt, border=1)
         pdf.ln()
 
-    # Transformation en bytes pour Streamlit
     return bytes(pdf.output())
 
 # ─── INTERFACE ───
-st.set_page_config(page_title="SkyAssistant V27", layout="wide")
+st.set_page_config(page_title="SkyAssistant V28", layout="wide")
 if 'waypoints' not in st.session_state: st.session_state.waypoints = []
 
 with st.sidebar:
-    st.title("✈️ SkyAssistant V27")
+    st.title("✈️ SkyAssistant V28")
     search = st.text_input("🔍 Rechercher OACI", "").upper()
     sugg = [k for k in AIRPORTS.keys() if k.startswith(search)] if search else []
     if sugg:
@@ -179,9 +162,20 @@ with col_map:
     if st.session_state.waypoints:
         m = folium.Map(location=[st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"]], zoom_start=9)
         folium.PolyLine([[w["lat"], w["lon"]] for w in st.session_state.waypoints], color="red", weight=3).add_to(m)
-        st_folium(m, width="100%", height=350, key="map_v27")
+        st_folium(m, width="100%", height=350, key="map_v28")
 
 # ─── LOG & PROFIL AVEC PALIERS ───
+if len(st.session_state.waypoints) > 0:
+    st.markdown("---")
+    st.subheader("📋 Gestion des Waypoints")
+    for idx, wp in enumerate(st.session_state.waypoints):
+        cols_wp = st.columns([0.1, 0.8, 0.1])
+        cols_wp[0].write(f"**{idx}**")
+        cols_wp[1].write(f"{wp['name']} ({round(wp['lat'],3)}, {round(wp['lon'],3)})")
+        if cols_wp[2].button("❌", key=f"del_{idx}"):
+            st.session_state.waypoints.pop(idx)
+            st.rerun()
+
 if len(st.session_state.waypoints) > 1:
     st.markdown("---")
     curr_t = dt.datetime.now(dt.timezone.utc)
@@ -198,7 +192,6 @@ if len(st.session_state.waypoints) > 1:
         wca = math.degrees(math.asin(sin_wca)) if abs(sin_wca) <= 1 else 0
         gs = max(20, (tas * math.cos(math.radians(wca))) - (ws * math.cos(wa)))
         
-        # TOC/TOD
         alt_croisiere = w2["alt"]
         alt_depart = w1["elev"] if i == 1 else w1["alt"]
         dist_climb = (gs * ((alt_croisiere - alt_depart) / v_climb) / 60) if alt_croisiere > alt_depart else 0
@@ -206,7 +199,6 @@ if len(st.session_state.waypoints) > 1:
         if i == len(st.session_state.waypoints) - 1:
             dist_desc = (gs * ((alt_croisiere - (w2["elev"] + 1000)) / v_descent) / 60)
 
-        # Graphique points
         if 0 < dist_climb < w2["dist"]:
             dist_p.append(d_total + dist_climb); alt_p.append(alt_croisiere); terr_p.append(w1["elev"])
         if i == len(st.session_state.waypoints) - 1 and 0 < dist_desc < w2["dist"]:
@@ -222,7 +214,6 @@ if len(st.session_state.waypoints) > 1:
     df_nav = pd.DataFrame(nav_rows)
     st.table(df_nav)
     
-    # Bouton PDF
     pdf_bytes = create_pdf(df_nav, metar_val)
     st.download_button(label="📥 Télécharger Log en PDF", data=pdf_bytes, file_name="nav_log.pdf", mime="application/pdf")
 
