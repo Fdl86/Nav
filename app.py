@@ -82,12 +82,12 @@ def create_pdf(df_nav, metar_text):
     return bytes(pdf.output())
 
 # ─── INTERFACE ───
-st.set_page_config(page_title="SkyAssistant V46", layout="wide")
+st.set_page_config(page_title="SkyAssistant V47", layout="wide")
 
 if 'waypoints' not in st.session_state: st.session_state.waypoints = []
 
 with st.sidebar:
-    st.title("✈️ SkyAssistant V46")
+    st.title("✈️ SkyAssistant V47")
     search = st.text_input("🔍 Rechercher OACI", "").upper()
     sugg = [k for k in AIRPORTS.keys() if k.startswith(search)] if search else []
     if sugg and st.button(f"Départ : {sugg[0]}"):
@@ -133,7 +133,7 @@ with col_map:
             icon_c = "blue" if i == 0 else ("red" if i == num_w-1 else "orange")
             icon_t = "plane" if i == 0 else ("flag" if i == num_w-1 else "dot-circle-o")
             folium.Marker([w["lat"], w["lon"]], popup=f"{w['name']}", icon=folium.Icon(color=icon_c, icon=icon_t, prefix="fa")).add_to(m)
-        folium.LayerControl().add_to(m); st_folium(m, width="100%", height=300, key="map_v46", returned_objects=[])
+        folium.LayerControl().add_to(m); st_folium(m, width="100%", height=300, key="map_v47", returned_objects=[])
 
 # ─── LOG DE NAVIGATION & PROFIL ───
 if len(st.session_state.waypoints) > 1:
@@ -153,7 +153,7 @@ if len(st.session_state.waypoints) > 1:
         fuel_branch = round(hours * fuel_flow, 1)
         alt_crois = w2["alt"]; tt_str = ""
 
-        # TOC (Section à modifier dans ta boucle for)
+        # CALCUL TOC
         if alt_crois > current_alt:
             t_climb = ((alt_crois - current_alt) / v_climb) * 60
             d_climb = (gs * (t_climb/3600))
@@ -162,11 +162,9 @@ if len(st.session_state.waypoints) > 1:
                 tt_str += f"TOC:{round(d_climb,1)}NM "
                 if d_climb < w2["dist"]:
                     dist_p.append(d_total + d_climb); alt_p.append(alt_crois); terr_p.append(w1["elev"])
-                    fig.add_annotation(x=d_total + d_climb, y=alt_crois, 
-                    text=f"TOC {round(d_climb,1)}NM ({t_cl_str})", 
-                    showarrow=True, ay=45)
+                    fig.add_annotation(x=d_total + d_climb, y=alt_crois, text=f"TOC {round(d_climb,1)}NM ({t_cl_str})", showarrow=True, ay=45)
 
-        # TOD
+        # GESTION ARRIVÉE (TDP / VT)
         at = w2.get("arr_type", "Direct")
         if (i == len(st.session_state.waypoints)-1) and at == "Direct": at = "VT (1500ft)" 
 
@@ -179,10 +177,12 @@ if len(st.session_state.waypoints) > 1:
                 tt_str += f"TOD:{round(d_desc,1)}NM"
                 if d_desc < w2["dist"]:
                     dist_p.append(d_total + (w2["dist"] - d_desc)); alt_p.append(alt_crois); terr_p.append(w2["elev"])
-                    label_dest = "VT" if "VT" in at else "TDP"
-                fig.add_annotation(x=d_total, y=alt_t, text=f"<b>{label_dest} {w2['name']}</b>", showarrow=False, yshift=15, font=dict(color="orange", size=12)
-                                  )
-            fig.add_annotation(x=d_total + (w2["dist"] - d_desc), y=alt_crois, text=f"TOD {round(d_desc,1)}NM ({t_de_str})", showarrow=True, ay=-45)
+                    fig.add_annotation(x=d_total + (w2["dist"] - d_desc), y=alt_crois, text=f"TOD {round(d_desc,1)}NM ({t_de_str})", showarrow=True, ay=-45)
+            
+            # Label pour VT/TDP sur le graphique
+            label_dest = "VT" if "VT" in at else "TDP"
+            fig.add_annotation(x=d_total + w2["dist"], y=alt_t, text=f"<b>{label_dest} {w2['name']}</b>", showarrow=False, yshift=15, font=dict(color="orange", size=11))
+            
             d_total += w2["dist"]; dist_p.append(d_total); alt_p.append(alt_t); terr_p.append(w2["elev"])
             dist_p.append(d_total); alt_p.append(w2["elev"]); terr_p.append(w2["elev"])
             fig.add_vline(x=d_total, line_width=2, line_dash="dash", line_color="orange")
@@ -230,7 +230,7 @@ if len(st.session_state.waypoints) > 1:
     # ─── GRAPHIQUE SCROLLABLE ───
     fig.add_trace(go.Scatter(x=dist_p, y=terr_p, fill='tozeroy', name='Relief', line_color='sienna'))
     fig.add_trace(go.Scatter(x=dist_p, y=alt_p, name='Profil Avion', line=dict(color='royalblue', width=4)))
-    fig.update_layout(width=1000, height=350, xaxis=dict(fixedrange=True, tickformat=".1f"), yaxis=dict(fixedrange=True), margin=dict(l=40, r=40, t=20, b=40), showlegend=False)
+    fig.update_layout(width=1000, height=350, xaxis=dict(fixedrange=True, tickformat=".1f", title="Distance (NM)"), yaxis=dict(fixedrange=True, title="Altitude (ft)"), margin=dict(l=40, r=40, t=20, b=40), showlegend=False)
     st.markdown('<div style="overflow-x: auto; width: 100%; border: 1px solid #444; border-radius: 10px;">', unsafe_allow_html=True)
     st.plotly_chart(fig, use_container_width=False, config={'staticPlot': True, 'displayModeBar': False})
     st.markdown('</div>', unsafe_allow_html=True)
