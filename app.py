@@ -44,32 +44,45 @@ def calculate_gs_and_wca(tas, tc, wd, ws):
     return max(20, gs), round(wca)
 
 def get_wind(lat, lon, alt_ft, time_dt):
-    target = min(PRESSURE_MAP.keys(), key=lambda x: abs(x - alt_ft))
-    lv = PRESSURE_MAP[target]
+    # On définit les deux couches qui encadrent l'altitude
+    levels = sorted(PRESSURE_MAP.keys())
+    # Trouver la couche inférieure et supérieure
+    low_alt = max([l for l in levels if l <= alt_ft] or [levels[0]])
+    high_alt = min([l for l in levels if l >= alt_ft] or [levels[-1]])
     
-    # On tente AROME HD en premier
-    params = {
-        "latitude": lat, "longitude": lon,
-        "hourly": f"wind_speed_{lv}hPa,wind_direction_{lv}hPa",
-        "models": "meteofrance_arome_france_hd",
-        "wind_speed_unit": "kn", "timezone": "UTC", "forecast_days": 1
-    }
+    def fetch_layer(alt):
+        lv = PRESSURE_MAP[alt]
+        p = {
+            "latitude": lat, "longitude": lon,
+            "hourly": f"wind_speed_{lv}hPa,wind_direction_{lv}hPa",
+            "models": "meteofrance_arome_france_hd",
+            "wind_speed_unit": "kn", "timezone": "UTC", "forecast_days": 1
+        }
+        try:
+            r = requests.get(OPEN_METEO_URL, params=p).json()
+            if "hourly" not in r or r["hourly"][f"wind_speed_{lv}hPa"][0] is None:
+                p["models"] = "meteofrance_seamless"
+                r = requests.get(OPEN_METEO_URL, params=p).json()
+            idx = min(range(len(r["hourly"]["time"])), key=lambda k: abs(datetime.fromisoformat(r["hourly"]["time"][k]) - time_dt))
+            return r["hourly"][f"wind_direction_{lv}hPa"][idx], r["hourly"][f"wind_speed_{lv}hPa"][idx]
+        except: return 0, 0
+
+    wd1, ws1 = fetch_layer(low_alt)
     
-    try:
-        r = requests.get(OPEN_METEO_URL, params=params).json()
-        
-        # Si AROME HD renvoie du vide ou une erreur, on bascule sur le modèle "Seamless"
-        if "hourly" not in r or r["hourly"][f"wind_speed_{lv}hPa"][0] is None:
-            params["models"] = "meteofrance_seamless"
-            r = requests.get(OPEN_METEO_URL, params=params).json()
-            
-        idx = min(range(len(r["hourly"]["time"])), key=lambda k: abs(datetime.fromisoformat(r["hourly"]["time"][k]) - time_dt))
-        wd = r["hourly"][f"wind_direction_{lv}hPa"][idx]
-        ws = r["hourly"][f"wind_speed_{lv}hPa"][idx]
-        
-        return (wd, ws) if wd is not None else (0, 0)
-    except:
-        return 0, 0
+    if low_alt == high_alt:
+        return wd1, ws1
+    
+    wd2, ws2 = fetch_layer(high_alt)
+    
+    # Interpolation linéaire simple
+    ratio = (alt_ft - low_alt) / (high_alt - low_alt)
+    ws_interp = ws1 + (ws2 - ws1) * ratio
+    
+    # Pour la direction, on gère le passage du 360°
+    diff = (wd2 - wd1 + 180) % 360 - 180
+    wd_interp = (wd1 + diff * ratio) % 360
+    
+    return round(wd_interp), round(ws_interp)
 
 def calculate_destination(lat, lon, bearing, dist_nm):
     R = 3440.065
