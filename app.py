@@ -80,11 +80,11 @@ def create_pdf(df_nav, metar_text):
     return bytes(pdf.output())
 
 # ─── INTERFACE ───
-st.set_page_config(page_title="SkyAssistant V33", layout="wide")
+st.set_page_config(page_title="SkyAssistant V33.2", layout="wide")
 if 'waypoints' not in st.session_state: st.session_state.waypoints = []
 
 with st.sidebar:
-    st.title("✈️ SkyAssistant V33")
+    st.title("✈️ SkyAssistant V33.2")
     search = st.text_input("🔍 Rechercher OACI", "").upper()
     sugg = [k for k in AIRPORTS.keys() if k.startswith(search)] if search else []
     if sugg and st.button(f"Départ : {sugg[0]}"):
@@ -122,8 +122,7 @@ with col_map:
     if st.session_state.waypoints:
         m = folium.Map(location=[st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"]], zoom_start=9)
         folium.PolyLine([[w["lat"], w["lon"]] for w in st.session_state.waypoints], color="red", weight=3).add_to(m)
-        # FLUIDITÉ : Ajout de returning_objects=[] pour stopper les rechargements sur mouvement de carte
-        st_folium(m, width="100%", height=350, key="map_v33", returned_objects=[])
+        st_folium(m, width="100%", height=350, key="map_v33_fixed", returned_objects=[])
 
 # ─── LOG DE NAVIGATION & PROFIL ───
 if len(st.session_state.waypoints) > 1:
@@ -148,8 +147,8 @@ if len(st.session_state.waypoints) > 1:
         t_climb_s = ((alt_croisiere - alt_depart) / v_climb) * 60 if alt_croisiere > alt_depart else 0
         dist_climb = (gs * (t_climb_s/3600))
         
-        # TOD (+1000ft AAL)
-        dist_desc = 0; t_desc_s = 0; alt_target = w2["elev"] + 1000
+        # TOD (+1500ft AAL pour intégration verticale terrain)
+        dist_desc = 0; t_desc_s = 0; alt_target = w2["elev"] + 1500
         if i == len(st.session_state.waypoints) - 1:
             t_desc_s = ((alt_croisiere - alt_target) / v_descent) * 60 if alt_croisiere > alt_target else 0
             dist_desc = (gs * (t_desc_s/3600))
@@ -170,17 +169,14 @@ if len(st.session_state.waypoints) > 1:
                 x_tod = d_total + (w2["dist"] - dist_desc)
                 dist_p.append(x_tod); alt_p.append(alt_croisiere); terr_p.append(w2["elev"])
                 fig.add_annotation(x=x_tod, y=alt_croisiere, text=f"TOD ({t_str})", showarrow=True)
-                # On marque le palier d'intégration (1000ft AAL)
+                # On marque le palier d'intégration (1500ft AAL)
                 dist_p.append(d_total + w2["dist"]); alt_p.append(alt_target)
 
         d_total += w2["dist"]
         
-        # Tracé profil
         if i == len(st.session_state.waypoints) - 1:
-            # Point final au sol
             dist_p.append(d_total); alt_p.append(w2["elev"]); terr_p.append(w2["elev"])
-            # LIGNE VERTICALE TERRAIN (ORANGE POINTILLÉ)
-            fig.add_vline(x=d_total, line_width=2, line_dash="dash", line_color="orange", annotation_text="Verticale Terrain")
+            fig.add_vline(x=d_total, line_width=2, line_dash="dash", line_color="orange", annotation_text="Verticale Terrain (1500ft AAL)")
         else:
             dist_p.append(d_total); alt_p.append(alt_croisiere); terr_p.append(w2["elev"])
         
