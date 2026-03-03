@@ -155,7 +155,7 @@ if len(st.session_state.waypoints) > 1:
         alt_croisiere = w2["alt"]
         toc_tod_str = ""
 
-        # CALCUL TOC (Montée depuis l'altitude de fin du segment précédent)
+       # MODIFICATION DANS LE CALCUL TOC
         if alt_croisiere > current_altitude_at_start:
             t_climb_s = ((alt_croisiere - current_altitude_at_start) / v_climb) * 60
             dist_climb = (gs * (t_climb_s/3600))
@@ -164,9 +164,10 @@ if len(st.session_state.waypoints) > 1:
                 toc_tod_str += f"TOC: {round(dist_climb,1)}NM ({t_str}) "
                 if dist_climb < w2["dist"]:
                     dist_p.append(d_total + dist_climb); alt_p.append(alt_croisiere); terr_p.append(w1["elev"])
-                    fig.add_annotation(x=d_total + dist_climb, y=alt_croisiere, text=f"TOC", showarrow=True)
+                    # MISE À JOUR ICI : Ajout du temps dans l'annotation
+                    fig.add_annotation(x=d_total + dist_climb, y=alt_croisiere, text=f"TOC ({t_str})", showarrow=True, arrowhead=2)
 
-        # CALCUL TOD (Si c'est le dernier point OU si on a coché "Toucher")
+        # MODIFICATION DANS LE CALCUL TOD
         is_last = (i == len(st.session_state.waypoints) - 1)
         if is_last or w2.get("is_land", False):
             alt_target = w2["elev"] + 1500
@@ -177,8 +178,9 @@ if len(st.session_state.waypoints) > 1:
                 toc_tod_str += f"TOD: {round(dist_desc,1)}NM ({t_str})"
                 if dist_desc < w2["dist"]:
                     dist_p.append(d_total + (w2["dist"] - dist_desc)); alt_p.append(alt_croisiere); terr_p.append(w2["elev"])
-                    fig.add_annotation(x=d_total + (w2["dist"] - dist_desc), y=alt_croisiere, text=f"TOD", showarrow=True)
-            
+                    # MISE À JOUR ICI : Ajout du temps dans l'annotation
+                    fig.add_annotation(x=d_total + (w2["dist"] - dist_desc), y=alt_croisiere, text=f"TOD ({t_str})", showarrow=True, arrowhead=2)
+                    
             # Arrivée au palier 1500ft puis sol
             d_total += w2["dist"]
             dist_p.append(d_total); alt_p.append(alt_target); terr_p.append(w2["elev"])
