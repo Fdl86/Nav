@@ -212,34 +212,45 @@ with col_ctrl:
 # ───────────────── CARTE ─────────────────
 
 with col_map:
-    if st.session_state.waypoints:
-        m=folium.Map(
-            location=[st.session_state.waypoints[0]["lat"],
-                      st.session_state.waypoints[0]["lon"]],
+    if (
+        st.session_state.waypoints
+        and isinstance(st.session_state.waypoints, list)
+        and "lat" in st.session_state.waypoints[0]
+        and "lon" in st.session_state.waypoints[0]
+    ):
+
+        start_wp = st.session_state.waypoints[0]
+
+        m = folium.Map(
+            location=[start_wp["lat"], start_wp["lon"]],
             zoom_start=9,
             prefer_canvas=True
         )
 
         folium.PolyLine(
-            [[w["lat"],w["lon"]] for w in st.session_state.waypoints],
+            [[w["lat"], w["lon"]] for w in st.session_state.waypoints if "lat" in w],
             color="red",
             weight=3
         ).add_to(m)
 
-        num_w=len(st.session_state.waypoints)
+        num_w = len(st.session_state.waypoints)
 
-        for i,w in enumerate(st.session_state.waypoints):
-            icon_c="blue" if i==0 else ("red" if i==num_w-1 else "green")
-            icon_t="plane" if i==0 else ("flag-checkered" if i==num_w-1 else "location-arrow")
+        for i, w in enumerate(st.session_state.waypoints):
+
+            if "lat" not in w or "lon" not in w:
+                continue
+
+            icon_c = "blue" if i == 0 else ("red" if i == num_w-1 else "green")
+            icon_t = "plane" if i == 0 else ("flag-checkered" if i == num_w-1 else "location-arrow")
 
             folium.Marker(
-                [w["lat"],w["lon"]],
-                popup=w["name"],
-                icon=folium.Icon(color=icon_c,icon=icon_t,prefix="fa")
+                [w["lat"], w["lon"]],
+                popup=w.get("name", f"WP{i}"),
+                icon=folium.Icon(color=icon_c, icon=icon_t, prefix="fa")
             ).add_to(m)
 
-        st_folium(m,width="100%",height=350,returned_objects=[])
-
+        st_folium(m, width="100%", height=350, returned_objects=[])
+        
 # ───────────────── LOG NAV ─────────────────
 
 if len(st.session_state.waypoints)>1:
