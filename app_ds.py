@@ -585,5 +585,12 @@ if len(st.session_state.waypoints) > 1:
         showlegend=False,
     )
     st.markdown('<div style="overflow-x: auto; width: 100%; border: 1px solid #444; border-radius: 10px;">', unsafe_allow_html=True)
-    st.plotly_chart(fig, use_container_width=False, config={"staticPlot": True, "displayModeBar": False})
+    st.plotly_chart(
+    fig,
+    use_container_width=False,
+    config={
+        "displayModeBar": False,
+        "staticPlot": True
+    }
+)
     st.markdown("</div>", unsafe_allow_html=True)
