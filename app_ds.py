@@ -99,11 +99,17 @@ AIRPORTS = load_airports()
 
 # ─── ELEVATION ───
 @st.cache_data(ttl=86400)
+def _elevation_ft_cached(lat: float, lon: float) -> int:
+    # IMPORTANT: ne pas catch ici -> si ça plante, rien n'est mis en cache
+    r = SESSION.get(ELEVATION_URL, params={"latitude": lat, "longitude": lon}, timeout=HTTP_TIMEOUT)
+    r.raise_for_status()
+    j = r.json()
+    return round(j.get("elevation", [0])[0] * 3.28084)
+
 def get_elevation_ft(lat: float, lon: float) -> int:
+    # wrapper safe : en cas d'échec on renvoie 0, mais sans polluer le cache
     try:
-        r = SESSION.get(ELEVATION_URL, params={"latitude": lat, "longitude": lon}, timeout=HTTP_TIMEOUT)
-        j = r.json()
-        return round(j.get("elevation", [0])[0] * 3.28084)
+        return _elevation_ft_cached(lat, lon)
     except Exception:
         return 0
 
@@ -627,8 +633,10 @@ if len(st.session_state.waypoints) > 1:
 
         # ✅ Fix: si elevation du waypoint est à 0, on la recalcule (évite VT à 0)
         if elev2 <= 0:
-            elev2 = float(get_elevation_ft(lat2, lon2))
-            w2["elev"] = elev2
+            elev_try = get_elevation_ft(lat2, lon2)
+            if elev_try > 0:
+                elev2 = float(elev_try)
+                w2["elev"] = elev2
 
         # ── OBSTACLE max corridor (calcul local, pas de requête) ──
         best_obs = find_max_obstacle_for_segment(obstacles_all, lat1, lon1, lat2, lon2, CORRIDOR_NM)
