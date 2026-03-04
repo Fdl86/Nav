@@ -548,6 +548,7 @@ if len(st.session_state.waypoints) > 1:
             "Arrivée": st.column_config.SelectboxColumn("Arrivée", options=["Direct", "TDP (1000ft)", "VT (1500ft)"], width="small"),
             "❌": st.column_config.CheckboxColumn("❌", width="small"),
             "_idx": None,
+            num_rows="fixed"
         },
         hide_index=True,
     )
