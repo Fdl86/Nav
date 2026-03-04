@@ -1,4 +1,3 @@
-import os
 import streamlit as st
 import requests
 import pandas as pd
@@ -13,21 +12,10 @@ from fpdf import FPDF
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
 ELEVATION_URL = "https://api.open-meteo.com/v1/elevation"
 NOAA_DECL_URL = "https://www.ngdc.noaa.gov/geomag-web/calculators/calculateDeclination"
-OVERPASS_URL = "https://overpass-api.de/api/interpreter"
-
-# OpenAIP (clé via variable d'env / secrets, PAS dans le code)
-OPENAIP_CORE_BASE = "https://api.core.openaip.net"
-OPENAIP_OBS_ENDPOINT_GUESS = "/api/obstacles"  # best-effort; sinon fallback OSM
-
 PRESSURE_MAP = {1000: 975, 1500: 960, 2000: 950, 2500: 925, 3000: 900, 5000: 850, 7000: 750}
 HTTP_TIMEOUT = 8
 
-CORRIDOR_NM = 3.0         # ± 3 NM
-OBST_TTL_SEC = 3600       # cache obstacles 1h
-SAMPLE_STEP_M = 300.0     # échantillonnage tous les 300m le long de la branche
-CROSS_OFFSETS = [-1.0, -0.5, 0.0, 0.5, 1.0]  # multipliers * corridor_m (5 points par pas)
-
-st.set_page_config(page_title="SkyAssistant V52", layout="wide")
+st.set_page_config(page_title="SkyAssistant V53", layout="wide")
 
 # ─── HIDE STREAMLIT DATAFRAME TOOLBAR ───
 st.markdown("""
@@ -43,38 +31,14 @@ div[data-testid="stDataEditor"] [data-testid="stElementToolbar"] {
 @st.cache_resource
 def get_http_session() -> requests.Session:
     s = requests.Session()
-    s.headers.update({"User-Agent": "SkyAssistant/52"})
+    s.headers.update({"User-Agent": "SkyAssistant/53"})
     return s
 
 SESSION = get_http_session()
 
-# ─── WAYPOINT HELPERS ───
-WAYPOINT_KEYS = ["name", "lat", "lon", "alt", "elev", "arr_type", "tc", "dist", "manual_wind"]
-
-def wp_get(wp, key, default=None):
-    if isinstance(wp, dict):
-        return wp.get(key, default)
-    return getattr(wp, key, default)
-
-def wp_to_dict(wp) -> dict:
-    if isinstance(wp, dict):
-        return wp
-    d = {}
-    for k in WAYPOINT_KEYS:
-        v = getattr(wp, k, None)
-        if v is not None:
-            d[k] = v
-    d.setdefault("arr_type", "Direct")
-    return d
-
 # ─── STATE ───
 if "waypoints" not in st.session_state:
     st.session_state.waypoints = []
-try:
-    st.session_state.waypoints = [wp_to_dict(w) for w in st.session_state.waypoints]
-except Exception:
-    st.session_state.waypoints = []
-
 if "wx_refresh" not in st.session_state:
     st.session_state.wx_refresh = 0
 
@@ -99,7 +63,7 @@ def load_airports():
 
 AIRPORTS = load_airports()
 
-# ─── ELEVATION (IMPORTANT: ne pas cacher un 0 en cas d'échec) ───
+# ─── ELEVATION (ne pas cacher un 0 en cas d'échec) ───
 @st.cache_data(ttl=86400)
 def _elevation_ft_cached(lat: float, lon: float) -> int:
     r = SESSION.get(ELEVATION_URL, params={"latitude": lat, "longitude": lon}, timeout=HTTP_TIMEOUT)
@@ -112,35 +76,6 @@ def get_elevation_ft(lat: float, lon: float) -> int:
         return _elevation_ft_cached(lat, lon)
     except Exception:
         return 0
-
-@st.cache_data(ttl=3600)
-def _elevation_batch_ft_cached(lat_csv: str, lon_csv: str) -> list[int]:
-    """
-    Appel batch Open-Meteo elevation: accepte latitude/longitude sous forme de listes séparées par virgules.
-    Important: si ça échoue -> exception -> pas de cache "pourri".
-    """
-    r = SESSION.get(
-        ELEVATION_URL,
-        params={"latitude": lat_csv, "longitude": lon_csv},
-        timeout=HTTP_TIMEOUT,
-    )
-    r.raise_for_status()
-    j = r.json()
-    elev_m = j.get("elevation", [])
-    return [round(float(x) * 3.28084) for x in elev_m]
-
-def get_elevation_batch_ft(lats: list[float], lons: list[float]) -> list[int]:
-    # wrapper safe
-    try:
-        lat_csv = ",".join(f"{x:.6f}" for x in lats)
-        lon_csv = ",".join(f"{x:.6f}" for x in lons)
-        out = _elevation_batch_ft_cached(lat_csv, lon_csv)
-        if len(out) != len(lats):
-            # fallback: 0 si incohérent
-            return [0 for _ in lats]
-        return out
-    except Exception:
-        return [0 for _ in lats]
 
 # ─── METAR ───
 @st.cache_data(ttl=600)
@@ -238,272 +173,12 @@ def get_wind_v27_final(lat, lon, alt_ft, time_dt, manual_wind=None, wx_refresh: 
     except Exception:
         return 0.0, 0.0, "Err"
 
-# ─── NAV / GEO HELPERS ───
+# ─── NAV HELPERS ───
 def norm360(x: float) -> float:
     return (x % 360.0 + 360.0) % 360.0
 
 def fmt_deg(x: float) -> str:
     return f"{int(round(norm360(x))):03d}°"
-
-def nm_to_m(nm: float) -> float:
-    return nm * 1852.0
-
-def haversine_m(lat1, lon1, lat2, lon2) -> float:
-    R = 6371000.0
-    p1 = math.radians(lat1)
-    p2 = math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dl = math.radians(lon2 - lon1)
-    a = math.sin(dphi / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
-    return 2 * R * math.asin(math.sqrt(a))
-
-def initial_bearing_deg(lat1, lon1, lat2, lon2) -> float:
-    p1 = math.radians(lat1)
-    p2 = math.radians(lat2)
-    dl = math.radians(lon2 - lon1)
-    y = math.sin(dl) * math.cos(p2)
-    x = math.cos(p1) * math.sin(p2) - math.sin(p1) * math.cos(p2) * math.cos(dl)
-    brng = math.degrees(math.atan2(y, x))
-    return norm360(brng)
-
-def dest_point(lat, lon, bearing_deg, dist_m):
-    # destination point on sphere
-    R = 6371000.0
-    br = math.radians(bearing_deg)
-    p1 = math.radians(lat)
-    l1 = math.radians(lon)
-    d = dist_m / R
-
-    p2 = math.asin(math.sin(p1) * math.cos(d) + math.cos(p1) * math.sin(d) * math.cos(br))
-    l2 = l1 + math.atan2(math.sin(br) * math.sin(d) * math.cos(p1), math.cos(d) - math.sin(p1) * math.sin(p2))
-    return (math.degrees(p2), math.degrees(l2))
-
-def point_to_segment_distance_and_along_m(lat, lon, lat1, lon1, lat2, lon2):
-    """
-    Approx locale equirectangulaire (OK pour ~<100 NM).
-    Retourne:
-      - dist_m point -> segment
-      - along_m depuis A (clampé)
-      - seglen_m
-    """
-    lat0 = math.radians((lat1 + lat2) / 2.0)
-    mx = 111320.0 * math.cos(lat0)
-    my = 110540.0
-
-    ax, ay = (lon1 * mx), (lat1 * my)
-    bx, by = (lon2 * mx), (lat2 * my)
-    px, py = (lon * mx), (lat * my)
-
-    abx, aby = (bx - ax), (by - ay)
-    apx, apy = (px - ax), (py - ay)
-    ab2 = abx * abx + aby * aby
-    if ab2 <= 1e-9:
-        d = math.hypot(px - ax, py - ay)
-        return d, 0.0, 0.0
-
-    t = (apx * abx + apy * aby) / ab2
-    t = max(0.0, min(1.0, t))
-    cx = ax + t * abx
-    cy = ay + t * aby
-    dist = math.hypot(px - cx, py - cy)
-    seglen = math.sqrt(ab2)
-    along = t * seglen
-    return dist, along, seglen
-
-# ─── OBSTACLES (BATCH FETCH: 1 requête pour toute la nav) ───
-def get_openaip_key() -> str:
-    v = os.getenv("OPENAIP_API_KEY", "")
-    if v:
-        return v
-    try:
-        return st.secrets.get("OPENAIP_API_KEY", "")
-    except Exception:
-        return ""
-
-def _parse_m(v):
-    try:
-        s = str(v).strip().lower().replace("m", "")
-        return float(s)
-    except Exception:
-        return None
-
-@st.cache_data(ttl=OBST_TTL_SEC)
-def fetch_obstacles_overpass_bbox(min_lat, min_lon, max_lat, max_lon):
-    query = f"""
-    [out:json][timeout:25];
-    (
-      nwr["man_made"~"tower|mast|chimney|communications_tower|water_tower"]( {min_lat},{min_lon},{max_lat},{max_lon} );
-      nwr["power"="generator"]["generator:source"="wind"]( {min_lat},{min_lon},{max_lat},{max_lon} );
-      nwr["power"="tower"]( {min_lat},{min_lon},{max_lat},{max_lon} );
-      nwr["aeroway"="obstacle"]( {min_lat},{min_lon},{max_lat},{max_lon} );
-      nwr["aerialway"="pylon"]( {min_lat},{min_lon},{max_lat},{max_lon} );
-    );
-    out center tags;
-    """
-    try:
-        r = SESSION.post(OVERPASS_URL, data={"data": query}, timeout=HTTP_TIMEOUT + 15)
-        j = r.json()
-        out = []
-        for el in j.get("elements", []):
-            tags = el.get("tags", {}) or {}
-
-            if "lat" in el and "lon" in el:
-                lat, lon = el["lat"], el["lon"]
-            else:
-                c = el.get("center")
-                if not c:
-                    continue
-                lat, lon = c.get("lat"), c.get("lon")
-                if lat is None or lon is None:
-                    continue
-
-            name = tags.get("name") or tags.get("ref") or "Obstacle"
-            typ = tags.get("man_made") or tags.get("power") or tags.get("aeroway") or tags.get("aerialway") or "obstacle"
-
-            ele = tags.get("ele")
-            height = tags.get("height") or tags.get("building:height")
-
-            ele_m = _parse_m(ele) if ele is not None else None
-            h_m = _parse_m(height) if height is not None else None
-
-            alt_ft = None
-            if ele_m is not None and h_m is not None:
-                alt_ft = (ele_m + h_m) * 3.28084
-            elif ele_m is not None:
-                alt_ft = ele_m * 3.28084
-            elif h_m is not None:
-                terr = get_elevation_ft(float(lat), float(lon))
-                if terr > 0:
-                    alt_ft = terr + h_m * 3.28084
-
-            if alt_ft is None:
-                continue
-
-            out.append({"lat": float(lat), "lon": float(lon), "name": str(name), "type": str(typ), "alt_ft": float(alt_ft)})
-        return out
-    except Exception:
-        return []
-
-@st.cache_data(ttl=OBST_TTL_SEC)
-def fetch_obstacles_openaip_bbox_guess(min_lat, min_lon, max_lat, max_lon, api_key: str):
-    if not api_key:
-        return []
-    url = OPENAIP_CORE_BASE.rstrip("/") + OPENAIP_OBS_ENDPOINT_GUESS
-    headers = {"x-openaip-api-key": api_key}
-    params = {"bbox": f"{min_lon},{min_lat},{max_lon},{max_lat}", "limit": 5000}
-    try:
-        r = SESSION.get(url, headers=headers, params=params, timeout=HTTP_TIMEOUT)
-        if r.status_code != 200:
-            return []
-        j = r.json()
-        items = j.get("items") or j.get("data") or j.get("results") or []
-        out = []
-        for it in items:
-            lat = it.get("lat") or it.get("latitude")
-            lon = it.get("lon") or it.get("longitude")
-            if (lat is None or lon is None) and isinstance(it.get("geometry", {}), dict):
-                coords = it["geometry"].get("coordinates")
-                if isinstance(coords, (list, tuple)) and len(coords) >= 2:
-                    lon, lat = coords[0], coords[1]
-            if lat is None or lon is None:
-                continue
-
-            name = it.get("name") or it.get("title") or "Obstacle"
-            typ = it.get("type") or it.get("category") or "obstacle"
-
-            alt_ft = None
-            for k in ["elevationFt", "altitudeFt", "elevation_ft", "alt_ft"]:
-                if k in it and it[k] is not None:
-                    alt_ft = float(it[k]); break
-            if alt_ft is None:
-                for k in ["elevation", "altitude", "elevationM", "altitudeM", "elevation_m"]:
-                    if k in it and it[k] is not None:
-                        alt_ft = float(it[k]) * 3.28084
-                        break
-            if alt_ft is None:
-                continue
-
-            out.append({"lat": float(lat), "lon": float(lon), "name": str(name), "type": str(typ), "alt_ft": float(alt_ft)})
-        return out
-    except Exception:
-        return []
-
-def compute_nav_bbox_with_margin(waypoints, corridor_nm: float):
-    lats = [float(wp_get(w, "lat")) for w in waypoints]
-    lons = [float(wp_get(w, "lon")) for w in waypoints]
-    min_lat, max_lat = min(lats), max(lats)
-    min_lon, max_lon = min(lons), max(lons)
-
-    margin_m = nm_to_m(corridor_nm) + 2000.0
-    margin_lat = margin_m / 110540.0
-    lat0 = math.radians((min_lat + max_lat) / 2.0)
-    margin_lon = margin_m / max(1e-9, (111320.0 * math.cos(lat0)))
-
-    return (min_lat - margin_lat, min_lon - margin_lon, max_lat + margin_lat, max_lon + margin_lon)
-
-def find_max_obstacle_for_segment(obstacles, lat1, lon1, lat2, lon2, corridor_nm: float):
-    corridor_m = nm_to_m(corridor_nm)
-    best = None
-    for o in obstacles:
-        d_m, along_m, seglen_m = point_to_segment_distance_and_along_m(o["lat"], o["lon"], lat1, lon1, lat2, lon2)
-        if d_m <= corridor_m:
-            if best is None or o["alt_ft"] > best["alt_ft"]:
-                best = dict(o)
-                best["dist_to_route_nm"] = d_m / 1852.0
-                best["along_nm"] = along_m / 1852.0
-                best["seglen_nm"] = seglen_m / 1852.0
-    return best
-
-# ─── TERRAIN CORRIDOR SAMPLING (300m) ───
-def build_corridor_samples_for_segment(lat1, lon1, lat2, lon2, step_m: float, corridor_nm: float):
-    """
-    Retourne:
-      points: list[(lat, lon)]
-      meta:   list[(along_m, xtrack_m)]  (xtrack_m = offset latéral signé)
-    """
-    corridor_m = nm_to_m(corridor_nm)
-    seglen_m = haversine_m(lat1, lon1, lat2, lon2)
-    if seglen_m < 1.0:
-        return [], []
-
-    brng = initial_bearing_deg(lat1, lon1, lat2, lon2)
-    n = max(1, int(math.ceil(seglen_m / step_m)))
-    points = []
-    meta = []
-
-    for i in range(n + 1):
-        along_m = min(seglen_m, i * step_m)
-        c_lat, c_lon = dest_point(lat1, lon1, brng, along_m)
-
-        for mul in CROSS_OFFSETS:
-            xtrack_m = mul * corridor_m
-            if abs(xtrack_m) < 1e-6:
-                p_lat, p_lon = c_lat, c_lon
-            else:
-                # à droite si mul>0 : bearing + 90
-                off_brg = norm360(brng + (90.0 if xtrack_m > 0 else -90.0))
-                p_lat, p_lon = dest_point(c_lat, c_lon, off_brg, abs(xtrack_m))
-            points.append((p_lat, p_lon))
-            meta.append((along_m, xtrack_m))
-
-    return points, meta
-
-def terrain_max_for_segment_from_samples(elev_ft_list: list[int], meta: list[tuple[float, float]]):
-    """
-    À partir des elevations (ft AMSL) et meta (along_m, xtrack_m), retourne:
-      max_ft, along_nm
-    """
-    best_ft = -1
-    best_along_m = 0.0
-    for ft, (along_m, _xt) in zip(elev_ft_list, meta):
-        if ft is None:
-            continue
-        if ft > best_ft:
-            best_ft = ft
-            best_along_m = along_m
-    if best_ft < 0:
-        return 0, 0.0
-    return int(best_ft), best_along_m / 1852.0
 
 # ─── PDF ───
 def create_pdf(df_nav_pdf: pd.DataFrame, metar_text: str):
@@ -520,31 +195,29 @@ def create_pdf(df_nav_pdf: pd.DataFrame, metar_text: str):
     pdf.multi_cell(0, 6, str(metar_text).encode("ascii", "ignore").decode("ascii"), border=1)
     pdf.ln(4)
 
-    cols = ["Branche", "Cap", "Vent", "GS", "EET", "Fuel", "TERR", "PosT", "OBST", "PosO", "Arrivée"]
-    w =   [28,       18,   28,    10,   12,   12,     12,    12,     12,    12,    22]
+    cols = ["Branche", "Rv", "Cap", "Vent", "GS", "EET", "Fuel", "TOC/TOD", "Arrivée"]
+    w =   [34,       10,   18,    30,     10,   12,    12,     38,       26]
 
-    pdf.set_font("helvetica", "B", 7)
+    pdf.set_font("helvetica", "B", 8)
     pdf.set_fill_color(220, 220, 220)
     for i, c in enumerate(cols):
         pdf.cell(w[i], 7, c, border=1, fill=True, align="C")
     pdf.ln()
 
-    pdf.set_font("helvetica", size=7)
+    pdf.set_font("helvetica", size=8)
     for _, row in df_nav_pdf.iterrows():
         def cell(i, text, align="L"):
             pdf.cell(w[i], 7, str(text).encode("ascii", "ignore").decode("ascii"), border=1, align=align)
 
         cell(0, row.get("Branche", "").replace("➔", "->"))
-        cell(1, row.get("Cap", ""), align="C")
-        cell(2, row.get("Vent", ""))
-        cell(3, row.get("GS", ""), align="C")
-        cell(4, row.get("EET", ""), align="C")
-        cell(5, row.get("Fuel", ""), align="C")
-        cell(6, row.get("TERR max", ""), align="C")
-        cell(7, row.get("Pos TERR", ""), align="C")
-        cell(8, row.get("OBST max", ""), align="C")
-        cell(9, row.get("Pos OBST", ""), align="C")
-        cell(10, row.get("Arrivée", ""))
+        cell(1, row.get("Rv", ""), align="C")
+        cell(2, row.get("Cap", ""), align="C")
+        cell(3, row.get("Vent", ""))
+        cell(4, row.get("GS", ""), align="C")
+        cell(5, row.get("EET", ""), align="C")
+        cell(6, row.get("Fuel", ""), align="C")
+        cell(7, row.get("TOC/TOD", ""))
+        cell(8, row.get("Arrivée", ""))
         pdf.ln()
 
     out = pdf.output(dest="S")
@@ -554,16 +227,11 @@ def create_pdf(df_nav_pdf: pd.DataFrame, metar_text: str):
 
 # ─────────────────────────── UI ───────────────────────────
 with st.sidebar:
-    st.title("✈️ SkyAssistant V52")
+    st.title("✈️ SkyAssistant V53")
 
     if st.button("🔄 Rafraîchir météo", use_container_width=True):
         st.session_state.wx_refresh += 1
         st.rerun()
-
-    with st.expander("🗼 Obstacles + Terrain (corridor ±3NM)", expanded=False):
-        prefer_openaip = st.toggle("Utiliser OpenAIP si clé dispo", True)
-        use_terrain_sampling = st.toggle("Activer terrain corridor (300m)", True)
-        show_debug = st.toggle("Debug", False)
 
     search = st.text_input("🔍 Rechercher OACI", "").upper()
     sugg = [k for k in AIRPORTS.keys() if k.startswith(search)] if search else []
@@ -581,7 +249,6 @@ with st.sidebar:
         st.rerun()
 
     st.markdown("---")
-
     tas = st.number_input("TAS (kt)", 50, 250, 100, step=1)
     v_climb = st.number_input("Montée (ft/min)", 100, 2000, 840, step=10)
     v_descent = st.number_input("Descente (ft/min)", 100, 2000, 500, step=10)
@@ -596,7 +263,7 @@ with st.sidebar:
 # ─── METAR ───
 metar_val = ""
 if st.session_state.waypoints:
-    dep_icao = wp_get(st.session_state.waypoints[0], "name")
+    dep_icao = st.session_state.waypoints[0]["name"]
     metar_val = get_metar_cached(dep_icao, st.session_state.wx_refresh)
     st.code(f"🕒 METAR {dep_icao} : {metar_val}", language="bash")
 
@@ -621,39 +288,32 @@ with col_ctrl:
         last = st.session_state.waypoints[-1]
         R = 3440.065
         brng = math.radians(rv_in)
-        la1, lo1 = math.radians(wp_get(last, "lat")), math.radians(wp_get(last, "lon"))
+        la1, lo1 = math.radians(last["lat"]), math.radians(last["lon"])
         la2 = math.degrees(la1 + (dist_in / R) * math.cos(brng))
         lo2 = math.degrees(lo1 + (dist_in / R) * math.sin(brng) / max(1e-9, math.cos(la1)))
+
+        elev2 = get_elevation_ft(la2, lo2)
 
         st.session_state.waypoints.append({
             "name": f"WP{len(st.session_state.waypoints)}",
             "lat": la2,
             "lon": lo2,
-            "tc": int(rv_in),  # Rv
+            "tc": int(rv_in),
             "dist": float(dist_in),
             "alt": int(alt_in),
             "manual_wind": m_wind,
-            "elev": get_elevation_ft(la2, lo2),
+            "elev": elev2,
             "arr_type": "Direct",
         })
         st.rerun()
 
 with col_map:
     if st.session_state.waypoints:
-        lat0 = wp_get(st.session_state.waypoints[0], "lat")
-        lon0 = wp_get(st.session_state.waypoints[0], "lon")
-        m = folium.Map(location=[lat0, lon0], zoom_start=9)
-
-        folium.TileLayer(
-            tiles="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
-            attr="Google Satellite",
-            name="Vue Satellite",
-            overlay=False,
-            control=True,
-        ).add_to(m)
+        m = folium.Map(location=[st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"]], zoom_start=9)
+        folium.TileLayer(tiles="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}", attr="Google Satellite", name="Vue Satellite", overlay=False, control=True).add_to(m)
         folium.TileLayer("openstreetmap", name="Carte Standard").add_to(m)
 
-        folium.PolyLine([[wp_get(w, "lat"), wp_get(w, "lon")] for w in st.session_state.waypoints], color="red", weight=3).add_to(m)
+        folium.PolyLine([[w["lat"], w["lon"]] for w in st.session_state.waypoints], color="red", weight=3).add_to(m)
 
         num_w = len(st.session_state.waypoints)
         for i, w in enumerate(st.session_state.waypoints):
@@ -664,84 +324,28 @@ with col_map:
             else:
                 icon_c, icon_t = "orange", "circle"
 
-            folium.Marker(
-                [wp_get(w, "lat"), wp_get(w, "lon")],
-                popup=f"{wp_get(w, 'name')}",
-                icon=folium.Icon(color=icon_c, icon=icon_t, prefix="fa"),
-            ).add_to(m)
+            folium.Marker([w["lat"], w["lon"]], popup=f"{w['name']}", icon=folium.Icon(color=icon_c, icon=icon_t, prefix="fa")).add_to(m)
 
         folium.LayerControl().add_to(m)
-        st_folium(m, width="100%", height=300, key="map_v52", returned_objects=[])
+        st_folium(m, width="100%", height=300, key="map_v53", returned_objects=[])
 
 # ─── LOG DE NAVIGATION & PROFIL ───
 if len(st.session_state.waypoints) > 1:
     st.markdown("---")
-
     now_utc = dt.datetime.now(dt.timezone.utc)
     dep_dt = dt.datetime.combine(now_utc.date(), dep_time, tzinfo=dt.timezone.utc)
 
-    # ── obstacles: 1 requête bbox nav ──
-    api_key = get_openaip_key()
-    use_openaip = bool(api_key) and bool(prefer_openaip)
-    bbox = compute_nav_bbox_with_margin(st.session_state.waypoints, CORRIDOR_NM)
-
-    if use_openaip:
-        obstacles_all = fetch_obstacles_openaip_bbox_guess(*bbox, api_key)
-        if not obstacles_all:
-            obstacles_all = fetch_obstacles_overpass_bbox(*bbox)
-    else:
-        obstacles_all = fetch_obstacles_overpass_bbox(*bbox)
-
-    # ── terrain sampling: build all sample points for ALL segments, batch elevation calls ──
-    terrain_by_seg = {}  # seg_idx -> dict(max_ft, along_nm)
-    all_pts = []
-    all_meta = []
-    seg_slices = {}  # seg_idx -> (start, end)
-
-    if use_terrain_sampling:
-        for i in range(1, len(st.session_state.waypoints)):
-            w1, w2 = st.session_state.waypoints[i - 1], st.session_state.waypoints[i]
-            lat1, lon1 = float(wp_get(w1, "lat")), float(wp_get(w1, "lon"))
-            lat2, lon2 = float(wp_get(w2, "lat")), float(wp_get(w2, "lon"))
-            pts, meta = build_corridor_samples_for_segment(lat1, lon1, lat2, lon2, SAMPLE_STEP_M, CORRIDOR_NM)
-
-            s = len(all_pts)
-            all_pts.extend(pts)
-            all_meta.extend(meta)
-            e = len(all_pts)
-            seg_slices[i] = (s, e)
-
-        # batch elevation in chunks
-        elev_ft_all = [0] * len(all_pts)
-        CHUNK = 200  # safe chunk size
-        for k in range(0, len(all_pts), CHUNK):
-            chunk = all_pts[k:k + CHUNK]
-            lats = [p[0] for p in chunk]
-            lons = [p[1] for p in chunk]
-            elevs = get_elevation_batch_ft(lats, lons)
-            elev_ft_all[k:k + CHUNK] = elevs
-
-        # compute per segment max
-        for seg_i, (s, e) in seg_slices.items():
-            seg_elevs = elev_ft_all[s:e]
-            seg_meta = all_meta[s:e]
-            mx_ft, mx_along_nm = terrain_max_for_segment_from_samples(seg_elevs, seg_meta)
-            terrain_by_seg[seg_i] = {"max_ft": mx_ft, "along_nm": mx_along_nm}
-
-    if show_debug:
-        st.info(f"Obstacles chargés: {len(obstacles_all)} (source={'OpenAIP' if use_openaip else 'OSM'})")
-        if use_terrain_sampling:
-            st.info(f"Terrain sampling: {len(all_pts)} points (pas={int(SAMPLE_STEP_M)}m, offsets={len(CROSS_OFFSETS)}x)")
-
     nav_data = []
     dist_p = [0.0]
-    elev0 = float(wp_get(st.session_state.waypoints[0], "elev", 0))
+    elev0 = float(st.session_state.waypoints[0].get("elev", 0))
     if elev0 <= 0:
-        elev0 = float(get_elevation_ft(float(wp_get(st.session_state.waypoints[0], "lat")), float(wp_get(st.session_state.waypoints[0], "lon"))))
-        st.session_state.waypoints[0]["elev"] = elev0
+        elev_try = get_elevation_ft(st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"])
+        if elev_try > 0:
+            elev0 = float(elev_try)
+            st.session_state.waypoints[0]["elev"] = elev0
+
     alt_p = [elev0]
     terr_p = [elev0]
-
     d_total = 0.0
     fig = go.Figure()
     current_alt = elev0
@@ -750,50 +354,26 @@ if len(st.session_state.waypoints) > 1:
     decl_local_cache = {}
 
     cum_sec = 0.0
-    marks = []  # (x_nm, y_ft, label, kind)
 
     for i in range(1, len(st.session_state.waypoints)):
         w1, w2 = st.session_state.waypoints[i - 1], st.session_state.waypoints[i]
 
-        rv = float(wp_get(w2, "tc", 0))          # Rv
-        dist_nm = float(wp_get(w2, "dist", 0))
-        alt_ft = float(wp_get(w2, "alt", 0))
-        elev2 = float(wp_get(w2, "elev", 0))
-        manual = wp_get(w2, "manual_wind", None)
+        rv = float(w2.get("tc", 0))
+        dist_nm = float(w2.get("dist", 0))
+        alt_ft = float(w2.get("alt", 0))
+        elev2 = float(w2.get("elev", 0))
+        manual = w2.get("manual_wind", None)
 
-        lat1, lon1 = float(wp_get(w1, "lat")), float(wp_get(w1, "lon"))
-        lat2, lon2 = float(wp_get(w2, "lat")), float(wp_get(w2, "lon"))
-
-        # fix elev waypoint si 0
         if elev2 <= 0:
-            elev_try = get_elevation_ft(lat2, lon2)
+            elev_try = get_elevation_ft(w2["lat"], w2["lon"])
             if elev_try > 0:
                 elev2 = float(elev_try)
                 w2["elev"] = elev2
 
-        # ── TERRAIN MAX (corridor sampling) ──
-        terr_txt = ""
-        terr_pos = ""
-        if use_terrain_sampling and i in terrain_by_seg:
-            mx = terrain_by_seg[i]["max_ft"]
-            along_nm = terrain_by_seg[i]["along_nm"]
-            terr_txt = f"{int(mx)}ft" if mx > 0 else ""
-            terr_pos = f"{along_nm:.1f}NM" if mx > 0 else ""
-            if mx > 0:
-                marks.append((d_total + along_nm, float(mx), f"TERR {int(mx)}ft", "terrain"))
-
-        # ── OBSTACLE max (base) ──
-        best_obs = find_max_obstacle_for_segment(obstacles_all, lat1, lon1, lat2, lon2, CORRIDOR_NM)
-        obst_txt, obst_pos = "", ""
-        if best_obs:
-            obst_txt = f"{int(round(best_obs['alt_ft']))}ft"
-            obst_pos = f"{best_obs['along_nm']:.1f}NM"
-            marks.append((d_total + float(best_obs["along_nm"]), float(best_obs["alt_ft"]), f"OBST {int(round(best_obs['alt_ft']))}ft", "obst"))
-
-        # ── WIND ──
+        # wind
         target = min(PRESSURE_MAP.keys(), key=lambda x: abs(x - alt_ft))
         lv = PRESSURE_MAP[target]
-        wkey = (round(lat2, 3), round(lon2, 3), lv, st.session_state.wx_refresh)
+        wkey = (round(w2["lat"], 3), round(w2["lon"], 3), lv, st.session_state.wx_refresh)
 
         if manual:
             wd, ws, src = float(manual["wd"]), float(manual["ws"]), "Manuel"
@@ -801,7 +381,7 @@ if len(st.session_state.waypoints) > 1:
             if wkey in wind_local_cache:
                 wd, ws, src = wind_local_cache[wkey]
             else:
-                wd, ws, src = get_wind_v27_final(lat2, lon2, alt_ft, now_utc, manual_wind=None, wx_refresh=st.session_state.wx_refresh)
+                wd, ws, src = get_wind_v27_final(w2["lat"], w2["lon"], alt_ft, now_utc, manual_wind=None, wx_refresh=st.session_state.wx_refresh)
                 wind_local_cache[wkey] = (wd, ws, src)
 
         wa = math.radians(wd - rv)
@@ -810,13 +390,13 @@ if len(st.session_state.waypoints) > 1:
         cap_vrai = norm360(rv + wca)
         gs = max(20.0, (float(tas) * math.cos(math.radians(wca))) - (ws * math.cos(wa)))
 
-        dkey = (round(lat2, 2), round(lon2, 2), dep_dt.date().isoformat())
+        # declinaison & cap mag
+        dkey = (round(w2["lat"], 2), round(w2["lon"], 2), dep_dt.date().isoformat())
         if dkey in decl_local_cache:
             decl = decl_local_cache[dkey]
         else:
-            decl = get_declination_deg(lat2, lon2, dep_dt)
+            decl = get_declination_deg(float(w2["lat"]), float(w2["lon"]), dep_dt)
             decl_local_cache[dkey] = decl
-
         cap_mag = norm360(cap_vrai - decl)
 
         hours = dist_nm / max(1e-9, gs)
@@ -826,67 +406,55 @@ if len(st.session_state.waypoints) > 1:
         cum_sec += seg_sec
         eta_dt = dep_dt + dt.timedelta(seconds=cum_sec)
 
-        # ── TOC/TOD + profil ──
-        alt_crois = alt_ft
         tt_str = ""
-
-        if alt_crois > current_alt:
-            t_climb = ((alt_crois - current_alt) / max(1e-9, float(v_climb))) * 60.0
+        if alt_ft > current_alt:
+            t_climb = ((alt_ft - current_alt) / max(1e-9, float(v_climb))) * 60.0
             d_climb = gs * (t_climb / 3600.0)
             if d_climb > 0.1:
                 t_cl_str = f"{int(t_climb//60):02d}:{int(t_climb%60):02d}"
                 tt_str += f"TOC:{round(d_climb,1)}NM "
                 if d_climb < dist_nm:
                     dist_p.append(d_total + d_climb)
-                    alt_p.append(alt_crois)
-                    terr_p.append(float(wp_get(w1, "elev", 0)))
-                    fig.add_annotation(x=d_total + d_climb, y=alt_crois, text=f"TOC {round(d_climb,1)}NM ({t_cl_str})", showarrow=True, ay=45)
+                    alt_p.append(alt_ft)
+                    terr_p.append(float(w1.get("elev", 0)))
 
-        at = wp_get(w2, "arr_type", "Direct")
+        at = w2.get("arr_type", "Direct")
         if (i == len(st.session_state.waypoints) - 1) and at == "Direct":
             at = "VT (1500ft)"
 
         if at != "Direct":
             alt_t = elev2 + (1500 if "VT" in at else 1000)
-            t_desc = ((alt_crois - alt_t) / max(1e-9, float(v_descent))) * 60.0 if alt_crois > alt_t else 0.0
+            t_desc = ((alt_ft - alt_t) / max(1e-9, float(v_descent))) * 60.0 if alt_ft > alt_t else 0.0
             d_desc = gs * (t_desc / 3600.0)
             if d_desc > 0.1:
-                t_de_str = f"{int(t_desc//60):02d}:{int(t_desc%60):02d}"
                 tt_str += f"TOD:{round(d_desc,1)}NM"
                 if d_desc < dist_nm:
                     dist_p.append(d_total + (dist_nm - d_desc))
-                    alt_p.append(alt_crois)
+                    alt_p.append(alt_ft)
                     terr_p.append(elev2)
-                    fig.add_annotation(x=d_total + (dist_nm - d_desc), y=alt_crois, text=f"TOD {round(d_desc,1)}NM ({t_de_str})", showarrow=True, ay=-45)
-
-            label_dest = "VT" if "VT" in at else "TDP"
-            fig.add_annotation(x=d_total + dist_nm, y=alt_t, text=f"<b>{label_dest} {wp_get(w2,'name')}</b>", showarrow=False, yshift=15, font=dict(color="orange", size=11))
 
             d_total += dist_nm
             dist_p.append(d_total); alt_p.append(alt_t); terr_p.append(elev2)
             dist_p.append(d_total); alt_p.append(elev2); terr_p.append(elev2)
-            fig.add_vline(x=d_total, line_width=2, line_dash="dash", line_color="orange")
             current_alt = elev2
         else:
             d_total += dist_nm
-            dist_p.append(d_total); alt_p.append(alt_crois); terr_p.append(elev2)
-            current_alt = alt_crois
+            dist_p.append(d_total); alt_p.append(alt_ft); terr_p.append(elev2)
+            current_alt = alt_ft
 
         drift_txt = f"{wca:+.0f}°"
         cap_txt = f"{fmt_deg(cap_mag)} ({drift_txt})"
 
         nav_data.append({
-            "Branche": f"{wp_get(w1,'name')}➔{wp_get(w2,'name')}",
+            "Branche": f"{w1['name']}➔{w2['name']}",
+            "Rv": f"{int(round(norm360(rv))):03d}",
             "Cap": cap_txt,
             "Vent": f"{int(wd)}/{int(ws)}kt ({src})",
             "GS": f"{int(gs)}",
             "EET": f"{int(seg_sec//60):02d}:{int(seg_sec%60):02d}",
             "Fuel": f"{fuel_branch:.1f}L",
             "ETA": eta_dt.strftime("%H:%M"),
-            "TERR max": terr_txt,
-            "Pos TERR": terr_pos,
-            "OBST max": obst_txt,
-            "Pos OBST": obst_pos,
+            "TOC/TOD": tt_str.strip(),
             "Arrivée": at,
             "❌": False,
             "_idx": i,
@@ -895,8 +463,7 @@ if len(st.session_state.waypoints) > 1:
     st.subheader("📋 Log de Navigation")
     df_nav = pd.DataFrame(nav_data)
 
-    df_screen = df_nav[["Branche", "Cap", "Vent", "GS", "EET", "Fuel", "ETA", "TERR max", "Pos TERR", "OBST max", "Pos OBST", "Arrivée", "❌", "_idx"]].copy()
-
+    df_screen = df_nav[["Branche", "Cap", "Vent", "GS", "EET", "Fuel", "ETA", "TOC/TOD", "Arrivée", "❌", "_idx"]].copy()
     edited_log = st.data_editor(
         df_screen,
         column_config={
@@ -907,10 +474,7 @@ if len(st.session_state.waypoints) > 1:
             "EET": st.column_config.TextColumn("EET", width="small", disabled=True),
             "Fuel": st.column_config.TextColumn("Fuel", width="small", disabled=True),
             "ETA": st.column_config.TextColumn("ETA", width="small", disabled=True),
-            "TERR max": st.column_config.TextColumn("TERR", width="small", disabled=True),
-            "Pos TERR": st.column_config.TextColumn("PosT", width="small", disabled=True),
-            "OBST max": st.column_config.TextColumn("OBST", width="small", disabled=True),
-            "Pos OBST": st.column_config.TextColumn("PosO", width="small", disabled=True),
+            "TOC/TOD": st.column_config.TextColumn("TOC/TOD", width="small", disabled=True),
             "Arrivée": st.column_config.SelectboxColumn("Arrivée", options=["Direct", "TDP (1000ft)", "VT (1500ft)"], width="small"),
             "❌": st.column_config.CheckboxColumn("❌", width="small"),
             "_idx": None,
@@ -928,24 +492,11 @@ if len(st.session_state.waypoints) > 1:
         st.session_state.waypoints = new_wps
         st.rerun()
 
-    df_pdf = df_nav[["Branche", "Cap", "Vent", "GS", "EET", "Fuel", "TERR max", "Pos TERR", "OBST max", "Pos OBST", "Arrivée"]].copy()
-    st.download_button(
-        label="📥 Log PDF",
-        data=create_pdf(df_pdf, metar_val),
-        file_name="nav_log.pdf",
-        use_container_width=True,
-    )
+    df_pdf = df_nav[["Branche", "Rv", "Cap", "Vent", "GS", "EET", "Fuel", "TOC/TOD", "Arrivée"]].copy()
+    st.download_button(label="📥 Log PDF", data=create_pdf(df_pdf, metar_val), file_name="nav_log.pdf", use_container_width=True)
 
-    # ─── GRAPHIQUE PROFIL ───
     fig.add_trace(go.Scatter(x=dist_p, y=terr_p, fill="tozeroy", name="Relief", line_color="sienna"))
     fig.add_trace(go.Scatter(x=dist_p, y=alt_p, name="Profil Avion", line=dict(color="royalblue", width=4)))
-
-    # annotations terrain/obstacles
-    for (x_nm, y_ft, label, kind) in marks:
-        sym = "triangle-up" if kind == "terrain" else "x"
-        fig.add_trace(go.Scatter(x=[x_nm], y=[y_ft], mode="markers", name=kind, marker=dict(size=10, symbol=sym)))
-        fig.add_annotation(x=x_nm, y=y_ft, text=f"<b>{label}</b>", showarrow=True, ay=-35)
-
     fig.update_layout(
         width=1000,
         height=350,
