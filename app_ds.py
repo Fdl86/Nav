@@ -229,8 +229,11 @@ def create_pdf(df_nav_pdf: pd.DataFrame, metar_text: str):
         cell(8, row.get("Arrivée", ""))
         pdf.ln()
 
-    return pdf.output(dest="S").encode("latin-1")
-
+    out = pdf.output(dest="S")
+    if isinstance(out, str):
+        out = out.encode("latin-1")
+    return out
+    
 # ─── HELPERS NAV ───
 def norm360(x: float) -> float:
     return (x % 360.0 + 360.0) % 360.0
