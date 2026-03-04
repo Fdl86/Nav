@@ -12,27 +12,32 @@ from fpdf import FPDF
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
 ELEVATION_URL = "https://api.open-meteo.com/v1/elevation"
 NOAA_DECL_URL = "https://www.ngdc.noaa.gov/geomag-web/calculators/calculateDeclination"
+
 PRESSURE_MAP = {1000: 975, 1500: 960, 2000: 950, 2500: 925, 3000: 900, 5000: 850, 7000: 750}
 HTTP_TIMEOUT = 8
 
-st.set_page_config(page_title="SkyAssistant V53", layout="wide")
+st.set_page_config(page_title="SkyAssistant V53.1", layout="wide")
 
 # ─── HIDE STREAMLIT DATAFRAME TOOLBAR ───
-st.markdown("""
+st.markdown(
+    """
 <style>
 div[data-testid="stDataFrame"] [data-testid="stElementToolbar"],
 div[data-testid="stDataEditor"] [data-testid="stElementToolbar"] {
     display: none !important;
 }
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 # ─── HTTP SESSION ───
 @st.cache_resource
 def get_http_session() -> requests.Session:
     s = requests.Session()
-    s.headers.update({"User-Agent": "SkyAssistant/53"})
+    s.headers.update({"User-Agent": "SkyAssistant/53.1"})
     return s
+
 
 SESSION = get_http_session()
 
@@ -61,6 +66,7 @@ def load_airports():
     except Exception:
         return base
 
+
 AIRPORTS = load_airports()
 
 # ─── ELEVATION (ne pas cacher un 0 en cas d'échec) ───
@@ -71,11 +77,13 @@ def _elevation_ft_cached(lat: float, lon: float) -> int:
     j = r.json()
     return round(j.get("elevation", [0])[0] * 3.28084)
 
+
 def get_elevation_ft(lat: float, lon: float) -> int:
     try:
         return _elevation_ft_cached(lat, lon)
     except Exception:
         return 0
+
 
 # ─── METAR ───
 @st.cache_data(ttl=600)
@@ -91,6 +99,7 @@ def get_metar_cached(icao: str, wx_refresh: int) -> str:
         return "METAR indisponible"
     except Exception:
         return "Erreur METAR"
+
 
 # ─── DECLINAISON ───
 @st.cache_data(ttl=86400 * 30)
@@ -114,6 +123,7 @@ def get_declination_deg(lat: float, lon: float, date_utc: dt.datetime) -> float:
     except Exception:
         return 0.0
 
+
 # ─── WIND ───
 @st.cache_data(ttl=900)
 def get_wind_openmeteo_cached(lat: float, lon: float, lv: int, wx_refresh: int) -> dict:
@@ -127,6 +137,7 @@ def get_wind_openmeteo_cached(lat: float, lon: float, lv: int, wx_refresh: int) 
     }
     r = SESSION.get(OPEN_METEO_URL, params=params, timeout=HTTP_TIMEOUT)
     return r.json()
+
 
 def get_wind_v27_final(lat, lon, alt_ft, time_dt, manual_wind=None, wx_refresh: int = 0):
     if manual_wind:
@@ -173,12 +184,15 @@ def get_wind_v27_final(lat, lon, alt_ft, time_dt, manual_wind=None, wx_refresh: 
     except Exception:
         return 0.0, 0.0, "Err"
 
+
 # ─── NAV HELPERS ───
 def norm360(x: float) -> float:
     return (x % 360.0 + 360.0) % 360.0
 
+
 def fmt_deg(x: float) -> str:
     return f"{int(round(norm360(x))):03d}°"
+
 
 # ─── PDF ───
 def create_pdf(df_nav_pdf: pd.DataFrame, metar_text: str):
@@ -196,7 +210,7 @@ def create_pdf(df_nav_pdf: pd.DataFrame, metar_text: str):
     pdf.ln(4)
 
     cols = ["Branche", "Rv", "Cap", "Vent", "GS", "EET", "Fuel", "TOC/TOD", "Arrivée"]
-    w =   [34,       10,   18,    30,     10,   12,    12,     38,       26]
+    w = [34, 10, 18, 30, 10, 12, 12, 38, 26]
 
     pdf.set_font("helvetica", "B", 8)
     pdf.set_fill_color(220, 220, 220)
@@ -206,6 +220,7 @@ def create_pdf(df_nav_pdf: pd.DataFrame, metar_text: str):
 
     pdf.set_font("helvetica", size=8)
     for _, row in df_nav_pdf.iterrows():
+
         def cell(i, text, align="L"):
             pdf.cell(w[i], 7, str(text).encode("ascii", "ignore").decode("ascii"), border=1, align=align)
 
@@ -225,9 +240,10 @@ def create_pdf(df_nav_pdf: pd.DataFrame, metar_text: str):
         out = out.encode("latin-1")
     return bytes(out)
 
+
 # ─────────────────────────── UI ───────────────────────────
 with st.sidebar:
-    st.title("✈️ SkyAssistant V53")
+    st.title("✈️ SkyAssistant V53.1")
 
     if st.button("🔄 Rafraîchir météo", use_container_width=True):
         st.session_state.wx_refresh += 1
@@ -238,14 +254,16 @@ with st.sidebar:
     if sugg and st.button(f"Départ : {sugg[0]}", use_container_width=True):
         ap = AIRPORTS[sugg[0]]
         elev = get_elevation_ft(ap["lat"], ap["lon"])
-        st.session_state.waypoints = [{
-            "name": sugg[0],
-            "lat": ap["lat"],
-            "lon": ap["lon"],
-            "alt": elev,
-            "elev": elev,
-            "arr_type": "Direct",
-        }]
+        st.session_state.waypoints = [
+            {
+                "name": sugg[0],
+                "lat": ap["lat"],
+                "lon": ap["lon"],
+                "alt": elev,
+                "elev": elev,
+                "arr_type": "Direct",
+            }
+        ]
         st.rerun()
 
     st.markdown("---")
@@ -294,23 +312,34 @@ with col_ctrl:
 
         elev2 = get_elevation_ft(la2, lo2)
 
-        st.session_state.waypoints.append({
-            "name": f"WP{len(st.session_state.waypoints)}",
-            "lat": la2,
-            "lon": lo2,
-            "tc": int(rv_in),
-            "dist": float(dist_in),
-            "alt": int(alt_in),
-            "manual_wind": m_wind,
-            "elev": elev2,
-            "arr_type": "Direct",
-        })
+        st.session_state.waypoints.append(
+            {
+                "name": f"WP{len(st.session_state.waypoints)}",
+                "lat": la2,
+                "lon": lo2,
+                "tc": int(rv_in),
+                "dist": float(dist_in),
+                "alt": int(alt_in),
+                "manual_wind": m_wind,
+                "elev": elev2,
+                "arr_type": "Direct",
+            }
+        )
         st.rerun()
 
 with col_map:
     if st.session_state.waypoints:
-        m = folium.Map(location=[st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"]], zoom_start=9)
-        folium.TileLayer(tiles="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}", attr="Google Satellite", name="Vue Satellite", overlay=False, control=True).add_to(m)
+        m = folium.Map(
+            location=[st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"]],
+            zoom_start=9,
+        )
+        folium.TileLayer(
+            tiles="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
+            attr="Google Satellite",
+            name="Vue Satellite",
+            overlay=False,
+            control=True,
+        ).add_to(m)
         folium.TileLayer("openstreetmap", name="Carte Standard").add_to(m)
 
         folium.PolyLine([[w["lat"], w["lon"]] for w in st.session_state.waypoints], color="red", weight=3).add_to(m)
@@ -322,12 +351,16 @@ with col_map:
             elif i == num_w - 1:
                 icon_c, icon_t = "red", "flag"
             else:
-                icon_c, icon_t = "orange", "circle"
+                icon_c, icon_t = "orange", "circle"  # point tournant plus raccord
 
-            folium.Marker([w["lat"], w["lon"]], popup=f"{w['name']}", icon=folium.Icon(color=icon_c, icon=icon_t, prefix="fa")).add_to(m)
+            folium.Marker(
+                [w["lat"], w["lon"]],
+                popup=f"{w['name']}",
+                icon=folium.Icon(color=icon_c, icon=icon_t, prefix="fa"),
+            ).add_to(m)
 
         folium.LayerControl().add_to(m)
-        st_folium(m, width="100%", height=300, key="map_v53", returned_objects=[])
+        st_folium(m, width="100%", height=300, key="map_v53_1", returned_objects=[])
 
 # ─── LOG DE NAVIGATION & PROFIL ───
 if len(st.session_state.waypoints) > 1:
@@ -337,6 +370,7 @@ if len(st.session_state.waypoints) > 1:
 
     nav_data = []
     dist_p = [0.0]
+
     elev0 = float(st.session_state.waypoints[0].get("elev", 0))
     if elev0 <= 0:
         elev_try = get_elevation_ft(st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"])
@@ -352,7 +386,6 @@ if len(st.session_state.waypoints) > 1:
 
     wind_local_cache = {}
     decl_local_cache = {}
-
     cum_sec = 0.0
 
     for i in range(1, len(st.session_state.waypoints)):
@@ -381,7 +414,9 @@ if len(st.session_state.waypoints) > 1:
             if wkey in wind_local_cache:
                 wd, ws, src = wind_local_cache[wkey]
             else:
-                wd, ws, src = get_wind_v27_final(w2["lat"], w2["lon"], alt_ft, now_utc, manual_wind=None, wx_refresh=st.session_state.wx_refresh)
+                wd, ws, src = get_wind_v27_final(
+                    w2["lat"], w2["lon"], alt_ft, now_utc, manual_wind=None, wx_refresh=st.session_state.wx_refresh
+                )
                 wind_local_cache[wkey] = (wd, ws, src)
 
         wa = math.radians(wd - rv)
@@ -407,6 +442,8 @@ if len(st.session_state.waypoints) > 1:
         eta_dt = dep_dt + dt.timedelta(seconds=cum_sec)
 
         tt_str = ""
+
+        # ── TOC (avec annotation graphique) ──
         if alt_ft > current_alt:
             t_climb = ((alt_ft - current_alt) / max(1e-9, float(v_climb))) * 60.0
             d_climb = gs * (t_climb / 3600.0)
@@ -414,9 +451,13 @@ if len(st.session_state.waypoints) > 1:
                 t_cl_str = f"{int(t_climb//60):02d}:{int(t_climb%60):02d}"
                 tt_str += f"TOC:{round(d_climb,1)}NM "
                 if d_climb < dist_nm:
-                    dist_p.append(d_total + d_climb)
+                    x_toc = d_total + d_climb
+                    dist_p.append(x_toc)
                     alt_p.append(alt_ft)
                     terr_p.append(float(w1.get("elev", 0)))
+                    fig.add_annotation(
+                        x=x_toc, y=alt_ft, text=f"TOC {round(d_climb,1)}NM ({t_cl_str})", showarrow=True, ay=45
+                    )
 
         at = w2.get("arr_type", "Direct")
         if (i == len(st.session_state.waypoints) - 1) and at == "Direct":
@@ -426,39 +467,68 @@ if len(st.session_state.waypoints) > 1:
             alt_t = elev2 + (1500 if "VT" in at else 1000)
             t_desc = ((alt_ft - alt_t) / max(1e-9, float(v_descent))) * 60.0 if alt_ft > alt_t else 0.0
             d_desc = gs * (t_desc / 3600.0)
+
+            # ── TOD (avec annotation graphique) ──
             if d_desc > 0.1:
+                t_de_str = f"{int(t_desc//60):02d}:{int(t_desc%60):02d}"
                 tt_str += f"TOD:{round(d_desc,1)}NM"
                 if d_desc < dist_nm:
-                    dist_p.append(d_total + (dist_nm - d_desc))
+                    x_tod = d_total + (dist_nm - d_desc)
+                    dist_p.append(x_tod)
                     alt_p.append(alt_ft)
                     terr_p.append(elev2)
+                    fig.add_annotation(
+                        x=x_tod, y=alt_ft, text=f"TOD {round(d_desc,1)}NM ({t_de_str})", showarrow=True, ay=-45
+                    )
+
+            # ── Label VT/TDP + vline ──
+            label_dest = "VT" if "VT" in at else "TDP"
+            fig.add_annotation(
+                x=d_total + dist_nm,
+                y=alt_t,
+                text=f"<b>{label_dest} {w2['name']}</b>",
+                showarrow=False,
+                yshift=15,
+                font=dict(color="orange", size=11),
+            )
 
             d_total += dist_nm
-            dist_p.append(d_total); alt_p.append(alt_t); terr_p.append(elev2)
-            dist_p.append(d_total); alt_p.append(elev2); terr_p.append(elev2)
+            dist_p.append(d_total)
+            alt_p.append(alt_t)
+            terr_p.append(elev2)
+
+            dist_p.append(d_total)
+            alt_p.append(elev2)
+            terr_p.append(elev2)
+
+            fig.add_vline(x=d_total, line_width=2, line_dash="dash", line_color="orange")
             current_alt = elev2
         else:
             d_total += dist_nm
-            dist_p.append(d_total); alt_p.append(alt_ft); terr_p.append(elev2)
+            dist_p.append(d_total)
+            alt_p.append(alt_ft)
+            terr_p.append(elev2)
             current_alt = alt_ft
 
         drift_txt = f"{wca:+.0f}°"
         cap_txt = f"{fmt_deg(cap_mag)} ({drift_txt})"
 
-        nav_data.append({
-            "Branche": f"{w1['name']}➔{w2['name']}",
-            "Rv": f"{int(round(norm360(rv))):03d}",
-            "Cap": cap_txt,
-            "Vent": f"{int(wd)}/{int(ws)}kt ({src})",
-            "GS": f"{int(gs)}",
-            "EET": f"{int(seg_sec//60):02d}:{int(seg_sec%60):02d}",
-            "Fuel": f"{fuel_branch:.1f}L",
-            "ETA": eta_dt.strftime("%H:%M"),
-            "TOC/TOD": tt_str.strip(),
-            "Arrivée": at,
-            "❌": False,
-            "_idx": i,
-        })
+        nav_data.append(
+            {
+                "Branche": f"{w1['name']}➔{w2['name']}",
+                "Rv": f"{int(round(norm360(rv))):03d}",
+                "Cap": cap_txt,
+                "Vent": f"{int(wd)}/{int(ws)}kt ({src})",
+                "GS": f"{int(gs)}",
+                "EET": f"{int(seg_sec//60):02d}:{int(seg_sec%60):02d}",
+                "Fuel": f"{fuel_branch:.1f}L",
+                "ETA": eta_dt.strftime("%H:%M"),
+                "TOC/TOD": tt_str.strip(),
+                "Arrivée": at,
+                "❌": False,
+                "_idx": i,
+            }
+        )
 
     st.subheader("📋 Log de Navigation")
     df_nav = pd.DataFrame(nav_data)
@@ -475,7 +545,9 @@ if len(st.session_state.waypoints) > 1:
             "Fuel": st.column_config.TextColumn("Fuel", width="small", disabled=True),
             "ETA": st.column_config.TextColumn("ETA", width="small", disabled=True),
             "TOC/TOD": st.column_config.TextColumn("TOC/TOD", width="small", disabled=True),
-            "Arrivée": st.column_config.SelectboxColumn("Arrivée", options=["Direct", "TDP (1000ft)", "VT (1500ft)"], width="small"),
+            "Arrivée": st.column_config.SelectboxColumn(
+                "Arrivée", options=["Direct", "TDP (1000ft)", "VT (1500ft)"], width="small"
+            ),
             "❌": st.column_config.CheckboxColumn("❌", width="small"),
             "_idx": None,
         },
@@ -493,10 +565,17 @@ if len(st.session_state.waypoints) > 1:
         st.rerun()
 
     df_pdf = df_nav[["Branche", "Rv", "Cap", "Vent", "GS", "EET", "Fuel", "TOC/TOD", "Arrivée"]].copy()
-    st.download_button(label="📥 Log PDF", data=create_pdf(df_pdf, metar_val), file_name="nav_log.pdf", use_container_width=True)
+    st.download_button(
+        label="📥 Log PDF",
+        data=create_pdf(df_pdf, metar_val),
+        file_name="nav_log.pdf",
+        use_container_width=True,
+    )
 
+    # ─── GRAPHIQUE (avec éléments terrain + profil + annotations) ───
     fig.add_trace(go.Scatter(x=dist_p, y=terr_p, fill="tozeroy", name="Relief", line_color="sienna"))
     fig.add_trace(go.Scatter(x=dist_p, y=alt_p, name="Profil Avion", line=dict(color="royalblue", width=4)))
+
     fig.update_layout(
         width=1000,
         height=350,
@@ -506,6 +585,9 @@ if len(st.session_state.waypoints) > 1:
         showlegend=False,
     )
 
-    st.markdown('<div style="overflow-x: auto; width: 100%; border: 1px solid #444; border-radius: 10px;">', unsafe_allow_html=True)
+    st.markdown(
+        '<div style="overflow-x: auto; width: 100%; border: 1px solid #444; border-radius: 10px;">',
+        unsafe_allow_html=True,
+    )
     st.plotly_chart(fig, use_container_width=False, config={"staticPlot": True, "displayModeBar": False})
     st.markdown("</div>", unsafe_allow_html=True)
