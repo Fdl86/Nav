@@ -17,6 +17,16 @@ HTTP_TIMEOUT = 6
 
 st.set_page_config(page_title="SkyAssistant V48", layout="wide")
 
+# ─── HIDE STREAMLIT DATAFRAME TOOLBAR ───
+st.markdown("""
+<style>
+div[data-testid="stDataFrame"] [data-testid="stElementToolbar"],
+div[data-testid="stDataEditor"] [data-testid="stElementToolbar"] {
+    display: none !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
 # ─── HTTP SESSION (réutilisation TCP = plus rapide) ───
 @st.cache_resource
 def get_http_session() -> requests.Session:
@@ -550,7 +560,6 @@ if len(st.session_state.waypoints) > 1:
             "_idx": None,
         },
         hide_index=True,
-        num_rows="fixed"
     )
 
     if not edited_log.equals(df_screen):
