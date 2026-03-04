@@ -22,10 +22,10 @@ OPENAIP_OBS_ENDPOINT_GUESS = "/api/obstacles"          # best-effort; si ça ne 
 PRESSURE_MAP = {1000: 975, 1500: 960, 2000: 950, 2500: 925, 3000: 900, 5000: 850, 7000: 750}
 HTTP_TIMEOUT = 8
 
-CORRIDOR_NM = 3.0  # ±3 NM
-OBST_TTL_SEC = 3600  # cache obstacles 1h
+CORRIDOR_NM = 3.0      # ±3 NM
+OBST_TTL_SEC = 3600    # cache obstacles 1h
 
-st.set_page_config(page_title="SkyAssistant V50", layout="wide")
+st.set_page_config(page_title="SkyAssistant V51", layout="wide")
 
 # ─── HIDE STREAMLIT DATAFRAME TOOLBAR ───
 st.markdown("""
@@ -41,7 +41,7 @@ div[data-testid="stDataEditor"] [data-testid="stElementToolbar"] {
 @st.cache_resource
 def get_http_session() -> requests.Session:
     s = requests.Session()
-    s.headers.update({"User-Agent": "SkyAssistant/50"})
+    s.headers.update({"User-Agent": "SkyAssistant/51"})
     return s
 
 SESSION = get_http_session()
@@ -191,7 +191,6 @@ def get_wind_v27_final(lat, lon, alt_ft, time_dt, manual_wind=None, wx_refresh: 
                 ws_arr = h.get(f"wind_speed_{lv}hPa_gfs_seamless", [])
                 src = "GFS"
 
-        # nearest time
         t_target = time_dt.timestamp()
         best_i, best_d = 0, float("inf")
         for i, t in enumerate(times):
@@ -250,11 +249,9 @@ def point_to_segment_distance_and_along_m(lat, lon, lat1, lon1, lat2, lon2):
 
 # ─── OBSTACLES (BATCH FETCH: 1 requête pour toute la nav) ───
 def get_openaip_key() -> str:
-    # GitHub Secrets -> variables d'env (si tu déploies via CI/CD)
     v = os.getenv("OPENAIP_API_KEY", "")
     if v:
         return v
-    # Streamlit Cloud Secrets -> st.secrets
     try:
         return st.secrets.get("OPENAIP_API_KEY", "")
     except Exception:
@@ -272,7 +269,7 @@ def fetch_obstacles_overpass_bbox(min_lat, min_lon, max_lat, max_lon):
     """
     Source gratuite: OSM/Overpass.
     Tags ciblés: tours/mâts/cheminées, pylônes, éoliennes, obstacle aeroway.
-    alt_ft = ele (si dispo) sinon terrain + height (si dispo)
+    alt_ft = (ele + height) si dispo, sinon ele, sinon terrain + height
     """
     query = f"""
     [out:json][timeout:25];
@@ -291,7 +288,6 @@ def fetch_obstacles_overpass_bbox(min_lat, min_lon, max_lat, max_lon):
         for el in j.get("elements", []):
             tags = el.get("tags", {}) or {}
 
-            # coords
             if "lat" in el and "lon" in el:
                 lat, lon = el["lat"], el["lon"]
             else:
@@ -307,18 +303,18 @@ def fetch_obstacles_overpass_bbox(min_lat, min_lon, max_lat, max_lon):
 
             ele = tags.get("ele")
             height = tags.get("height") or tags.get("building:height")
+
+            ele_m = _parse_m(ele) if ele is not None else None
+            h_m = _parse_m(height) if height is not None else None
+
             alt_ft = None
-
-            if ele is not None:
-                em = _parse_m(ele)
-                if em is not None:
-                    alt_ft = em * 3.28084
-
-            if alt_ft is None and height is not None:
-                hm = _parse_m(height)
-                if hm is not None:
-                    terr = get_elevation_ft(float(lat), float(lon))
-                    alt_ft = terr + hm * 3.28084
+            if ele_m is not None and h_m is not None:
+                alt_ft = (ele_m + h_m) * 3.28084
+            elif ele_m is not None:
+                alt_ft = ele_m * 3.28084
+            elif h_m is not None:
+                terr = get_elevation_ft(float(lat), float(lon))
+                alt_ft = terr + h_m * 3.28084
 
             if alt_ft is None:
                 continue
@@ -463,14 +459,13 @@ def create_pdf(df_nav_pdf: pd.DataFrame, metar_text: str):
 
 # ─────────────────────────── UI ───────────────────────────
 with st.sidebar:
-    st.title("✈️ SkyAssistant V50")
+    st.title("✈️ SkyAssistant V51")
 
     if st.button("🔄 Rafraîchir météo", use_container_width=True):
         st.session_state.wx_refresh += 1
         st.rerun()
 
     with st.expander("🗼 Obstacles (corridor ±3NM)", expanded=False):
-        # Auto: OpenAIP si clé dispo, sinon OSM
         prefer_openaip = st.toggle("Utiliser OpenAIP si clé dispo", True)
         show_obs_debug = st.toggle("Afficher debug obstacles", False)
 
@@ -580,7 +575,7 @@ with col_map:
             ).add_to(m)
 
         folium.LayerControl().add_to(m)
-        st_folium(m, width="100%", height=300, key="map_v50", returned_objects=[])
+        st_folium(m, width="100%", height=300, key="map_v51", returned_objects=[])
 
 # ─── LOG DE NAVIGATION & PROFIL ───
 if len(st.session_state.waypoints) > 1:
@@ -630,6 +625,11 @@ if len(st.session_state.waypoints) > 1:
         lat1, lon1 = float(wp_get(w1, "lat")), float(wp_get(w1, "lon"))
         lat2, lon2 = float(wp_get(w2, "lat")), float(wp_get(w2, "lon"))
 
+        # ✅ Fix: si elevation du waypoint est à 0, on la recalcule (évite VT à 0)
+        if elev2 <= 0:
+            elev2 = float(get_elevation_ft(lat2, lon2))
+            w2["elev"] = elev2
+
         # ── OBSTACLE max corridor (calcul local, pas de requête) ──
         best_obs = find_max_obstacle_for_segment(obstacles_all, lat1, lon1, lat2, lon2, CORRIDOR_NM)
         obst_txt, pos_txt = "", ""
@@ -653,7 +653,11 @@ if len(st.session_state.waypoints) > 1:
             if wkey in wind_local_cache:
                 wd, ws, src = wind_local_cache[wkey]
             else:
-                wd, ws, src = get_wind_v27_final(lat2, lon2, alt_ft, now_utc, manual_wind=None, wx_refresh=st.session_state.wx_refresh)
+                wd, ws, src = get_wind_v27_final(
+                    lat2, lon2, alt_ft, now_utc,
+                    manual_wind=None,
+                    wx_refresh=st.session_state.wx_refresh
+                )
                 wind_local_cache[wkey] = (wd, ws, src)
 
         wa = math.radians(wd - rv)
@@ -729,7 +733,6 @@ if len(st.session_state.waypoints) > 1:
 
         nav_data.append({
             "Branche": f"{wp_get(w1,'name')}➔{wp_get(w2,'name')}",
-            "Rv": f"{int(round(norm360(rv))):03d}",
             "Cap": cap_txt,
             "Vent": f"{int(wd)}/{int(ws)}kt ({src})",
             "GS": f"{int(gs)}",
@@ -779,7 +782,7 @@ if len(st.session_state.waypoints) > 1:
         st.session_state.waypoints = new_wps
         st.rerun()
 
-    df_pdf = df_nav[["Branche", "Rv", "Cap", "Vent", "GS", "EET", "Fuel", "OBST", "Pos", "TOC/TOD", "Arrivée"]].copy()
+    df_pdf = df_nav[["Branche", "Cap", "Vent", "GS", "EET", "Fuel", "OBST", "Pos", "TOC/TOD", "Arrivée"]].copy()
     st.download_button(
         label="📥 Log PDF",
         data=create_pdf(df_pdf, metar_val),
@@ -791,7 +794,6 @@ if len(st.session_state.waypoints) > 1:
     fig.add_trace(go.Scatter(x=dist_p, y=terr_p, fill="tozeroy", name="Relief", line_color="sienna"))
     fig.add_trace(go.Scatter(x=dist_p, y=alt_p, name="Profil Avion", line=dict(color="royalblue", width=4)))
 
-    # obstacles max (annotation sur profil)
     for (x_nm, alt_ob_ft, label) in obstacle_marks:
         fig.add_trace(go.Scatter(x=[x_nm], y=[alt_ob_ft], mode="markers", name="Obstacle", marker=dict(size=10, symbol="x")))
         fig.add_annotation(x=x_nm, y=alt_ob_ft, text=f"<b>{label}</b>", showarrow=True, ay=-35)
