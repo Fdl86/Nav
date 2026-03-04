@@ -232,7 +232,7 @@ def create_pdf(df_nav_pdf: pd.DataFrame, metar_text: str):
     out = pdf.output(dest="S")
     if isinstance(out, str):
         out = out.encode("latin-1")
-    return out
+    return bytes(out)
     
 # ─── HELPERS NAV ───
 def norm360(x: float) -> float:
