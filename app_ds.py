@@ -195,49 +195,63 @@ def fmt_deg(x: float) -> str:
 
 
 # ─── PDF ───
-def create_pdf(df_nav_pdf: pd.DataFrame, metar_text: str):
-    pdf = FPDF(orientation="P", unit="mm", format="A4")
+from fpdf import FPDF
+
+def create_pdf(df_nav, metar_text):
+
+    pdf = FPDF(orientation="L", unit="mm", format="A4")
     pdf.add_page()
 
-    pdf.set_font("helvetica", "B", 14)
-    pdf.cell(0, 10, "LOG DE NAVIGATION - SKYASSISTANT", new_x="LMARGIN", new_y="NEXT", align="C")
-    pdf.ln(5)
-
-    pdf.set_font("helvetica", "B", 10)
-    pdf.cell(0, 8, "METAR DE DEPART :", new_x="LMARGIN", new_y="NEXT")
-    pdf.set_font("helvetica", size=9)
-    pdf.multi_cell(0, 6, str(metar_text).encode("ascii", "ignore").decode("ascii"), border=1)
-    pdf.ln(4)
-
-    cols = ["Branche", "Rv", "Cap", "Vent", "GS", "EET", "Fuel", "TOC/TOD", "Arrivée"]
-    w = [34, 10, 18, 30, 10, 12, 12, 38, 26]
-
-    pdf.set_font("helvetica", "B", 8)
-    pdf.set_fill_color(220, 220, 220)
-    for i, c in enumerate(cols):
-        pdf.cell(w[i], 7, c, border=1, fill=True, align="C")
-    pdf.ln()
+    # ─── FOND TEMPLATE ───
+    pdf.image("lognava5.png", x=0, y=0, w=297, h=210)
 
     pdf.set_font("helvetica", size=8)
-    for _, row in df_nav_pdf.iterrows():
 
-        def cell(i, text, align="L"):
-            pdf.cell(w[i], 7, str(text).encode("ascii", "ignore").decode("ascii"), border=1, align=align)
+    # ─── POSITION TABLEAU NAV ───
+    start_x = 15
+    start_y = 70
+    row_h = 7
 
-        cell(0, row.get("Branche", "").replace("➔", "->"))
-        cell(1, row.get("Rv", ""), align="C")
-        cell(2, row.get("Cap", ""), align="C")
-        cell(3, row.get("Vent", ""))
-        cell(4, row.get("GS", ""), align="C")
-        cell(5, row.get("EET", ""), align="C")
-        cell(6, row.get("Fuel", ""), align="C")
-        cell(7, row.get("TOC/TOD", ""))
-        cell(8, row.get("Arrivée", ""))
-        pdf.ln()
+    col = {
+        "Branche": start_x,
+        "Cap": start_x + 55,
+        "Vent": start_x + 75,
+        "GS": start_x + 110,
+        "EET": start_x + 125,
+        "Fuel": start_x + 140,
+        "ETA": start_x + 155,
+    }
+
+    for i, row in df_nav.iterrows():
+
+        y = start_y + i * row_h
+
+        pdf.set_xy(col["Branche"], y)
+        pdf.cell(50, row_h, str(row.get("Branche", "")))
+
+        pdf.set_xy(col["Cap"], y)
+        pdf.cell(18, row_h, str(row.get("Cap", "")), align="C")
+
+        pdf.set_xy(col["Vent"], y)
+        pdf.cell(35, row_h, str(row.get("Vent", "")))
+
+        pdf.set_xy(col["GS"], y)
+        pdf.cell(10, row_h, str(row.get("GS", "")), align="C")
+
+        pdf.set_xy(col["EET"], y)
+        pdf.cell(15, row_h, str(row.get("EET", "")), align="C")
+
+        pdf.set_xy(col["Fuel"], y)
+        pdf.cell(15, row_h, str(row.get("Fuel", "")), align="C")
+
+        pdf.set_xy(col["ETA"], y)
+        pdf.cell(15, row_h, str(row.get("ETA", "")), align="C")
 
     out = pdf.output(dest="S")
+
     if isinstance(out, str):
         out = out.encode("latin-1")
+
     return bytes(out)
 
 
