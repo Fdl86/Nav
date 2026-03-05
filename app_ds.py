@@ -7,6 +7,7 @@ import folium
 from streamlit_folium import st_folium
 import plotly.graph_objects as go
 from fpdf import FPDF
+import re
 
 # ─── CONFIGURATION ───
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
@@ -16,7 +17,7 @@ PRESSURE_MAP = {1000: 975, 1500: 960, 2000: 950, 2500: 925, 3000: 900, 5000: 850
 HTTP_TIMEOUT = 8
 
 # ─── PAGE ───
-st.set_page_config(page_title="SkyAssistant V54", layout="wide")
+st.set_page_config(page_title="SkyAssistant V54.1", layout="wide")
 
 # ─── HIDE STREAMLIT DATAFRAME TOOLBAR ───
 st.markdown(
@@ -35,7 +36,7 @@ div[data-testid="stDataEditor"] [data-testid="stElementToolbar"] {
 @st.cache_resource
 def get_http_session() -> requests.Session:
     s = requests.Session()
-    s.headers.update({"User-Agent": "SkyAssistant/54"})
+    s.headers.update({"User-Agent": "SkyAssistant/54.1"})
     return s
 
 SESSION = get_http_session()
@@ -56,6 +57,10 @@ def load_airports():
             usecols=["ident", "name", "latitude_deg", "longitude_deg", "iso_country", "type"],
         )
         fr = df[(df["iso_country"] == "FR") & (df["type"].isin(["large_airport", "medium_airport", "small_airport"]))]
+
+        # IMPORTANT: on ne garde QUE les ident ICAO "LF??"
+        fr = fr[fr["ident"].astype(str).str.match(r"^LF[A-Z0-9]{2}$")]
+
         downloaded = {
             row["ident"]: {"name": row["name"], "lat": float(row["latitude_deg"]), "lon": float(row["longitude_deg"])}
             for _, row in fr.iterrows()
@@ -68,6 +73,11 @@ def load_airports():
 AIRPORTS = load_airports()
 
 # ─── HELPERS ───
+ICAO_LF_RE = re.compile(r"^LF[A-Z0-9]{2}$")
+
+def is_lf_icao(s: str) -> bool:
+    return bool(ICAO_LF_RE.match(str(s).upper().strip()))
+
 def norm360(x: float) -> float:
     return (x % 360.0 + 360.0) % 360.0
 
@@ -92,16 +102,19 @@ def haversine_nm(lat1, lon1, lat2, lon2) -> float:
     return km / 1.852
 
 @st.cache_data(ttl=86400)
-def airports_df_fr():
+def airports_df_fr_lf():
+    # Seulement LFxx (on ne peut plus sortir FR-xxxx)
     rows = []
     for icao, ap in AIRPORTS.items():
-        rows.append({"icao": icao, "name": ap.get("name", ""), "lat": ap.get("lat"), "lon": ap.get("lon")})
+        if is_lf_icao(icao):
+            rows.append({"icao": icao, "name": ap.get("name", ""), "lat": ap.get("lat"), "lon": ap.get("lon")})
     return pd.DataFrame(rows)
 
 def nearest_airfields(lat, lon, radius_nm=15.0, k=5, exclude_icao=None):
-    df = airports_df_fr().copy()
-    if exclude_icao:
+    df = airports_df_fr_lf().copy()
+    if exclude_icao and is_lf_icao(exclude_icao):
         df = df[df["icao"] != exclude_icao]
+    # calcul distance
     df["d_nm"] = df.apply(lambda r: haversine_nm(lat, lon, r["lat"], r["lon"]), axis=1)
     df = df[df["d_nm"] <= radius_nm].sort_values("d_nm").head(k)
     return df[["icao", "name", "d_nm"]].to_dict("records")
@@ -267,7 +280,7 @@ def create_pdf(df_nav, metar_text):
 
 # ─── SIDEBAR ───
 with st.sidebar:
-    st.title("✈️ SkyAssistant V54")
+    st.title("✈️ SkyAssistant V54.1")
 
     if st.button("🔄 Rafraîchir météo", use_container_width=True):
         st.session_state.wx_refresh += 1
@@ -373,7 +386,7 @@ with col_map:
             folium.Marker([w["lat"], w["lon"]], popup=f"{w['name']}", icon=folium.Icon(color=icon_c, icon=icon_t, prefix="fa")).add_to(m)
 
         folium.LayerControl().add_to(m)
-        st_folium(m, width="100%", height=300, key="map_v54", returned_objects=[])
+        st_folium(m, width="100%", height=300, key="map_v54_1", returned_objects=[])
 
 # ─── LOG + PROFILE ───
 if len(st.session_state.waypoints) > 1:
@@ -426,7 +439,9 @@ if len(st.session_state.waypoints) > 1:
             if wkey in wind_local_cache:
                 wd, ws, src = wind_local_cache[wkey]
             else:
-                wd, ws, src = get_wind_v27_final(w2["lat"], w2["lon"], alt_ft, now_utc, manual_wind=None, wx_refresh=st.session_state.wx_refresh)
+                wd, ws, src = get_wind_v27_final(
+                    w2["lat"], w2["lon"], alt_ft, now_utc, manual_wind=None, wx_refresh=st.session_state.wx_refresh
+                )
                 wind_local_cache[wkey] = (wd, ws, src)
 
         wa = math.radians(wd - rv)
@@ -481,7 +496,10 @@ if len(st.session_state.waypoints) > 1:
                     fig.add_annotation(x=x_tod, y=alt_ft, text=f"TOD {round(d_desc,1)}NM ({t_de_str})", showarrow=True, ay=-45)
 
             label_dest = "VT" if "VT" in at else "TDP"
-            fig.add_annotation(x=d_total + dist_nm, y=alt_t, text=f"<b>{label_dest} {w2['name']}</b>", showarrow=False, yshift=15, font=dict(color="orange", size=11))
+            fig.add_annotation(
+                x=d_total + dist_nm, y=alt_t, text=f"<b>{label_dest} {w2['name']}</b>",
+                showarrow=False, yshift=15, font=dict(color="orange", size=11)
+            )
 
             d_total += dist_nm
             dist_p.append(d_total); alt_p.append(alt_t); terr_p.append(elev2)
@@ -550,9 +568,13 @@ if len(st.session_state.waypoints) > 1:
     # Graph
     fig.add_trace(go.Scatter(x=dist_p, y=terr_p, fill="tozeroy", name="Relief", line_color="sienna"))
     fig.add_trace(go.Scatter(x=dist_p, y=alt_p, name="Profil Avion", line=dict(color="royalblue", width=4)))
-    fig.update_layout(width=1000, height=350, xaxis=dict(fixedrange=True, tickformat=".1f", title="Distance (NM)"),
-                      yaxis=dict(fixedrange=True, title="Altitude (ft)"),
-                      margin=dict(l=40, r=40, t=20, b=40), showlegend=False)
+    fig.update_layout(
+        width=1000, height=350,
+        xaxis=dict(fixedrange=True, tickformat=".1f", title="Distance (NM)"),
+        yaxis=dict(fixedrange=True, title="Altitude (ft)"),
+        margin=dict(l=40, r=40, t=20, b=40),
+        showlegend=False
+    )
     st.markdown('<div style="overflow-x: auto; width: 100%; border: 1px solid #444; border-radius: 10px;">', unsafe_allow_html=True)
     st.plotly_chart(fig, use_container_width=False, config={"staticPlot": True, "displayModeBar": False})
     st.markdown("</div>", unsafe_allow_html=True)
@@ -565,19 +587,22 @@ if len(st.session_state.waypoints) > 1:
 
         st.markdown("---")
 
-        to_list = [dep_icao]
+        to_list = []
+        if is_lf_icao(dep_icao):
+            to_list.append(dep_icao)
+
         arr_lat = st.session_state.waypoints[-1]["lat"]
         arr_lon = st.session_state.waypoints[-1]["lon"]
 
-        # arrivée si ICAO différent (si WP, il n'est pas dans AIRPORTS mais c'est OK)
+        # arrivée seulement si c'est un vrai ICAO LFxx différent
         arr_icao = st.session_state.waypoints[-1]["name"]
-        if arr_icao != dep_icao and arr_icao in AIRPORTS:
+        if is_lf_icao(arr_icao) and arr_icao != dep_icao:
             to_list.append(arr_icao)
 
-        # déroutements (15NM autour arrivée)
+        # déroutements (15NM autour arrivée) -> déjà filtrés LFxx
         divers = nearest_airfields(arr_lat, arr_lon, radius_nm=15.0, k=5, exclude_icao=dep_icao)
 
-        # proches VT/TDP
+        # proches VT/TDP -> déjà filtrés LFxx
         vt_tdp_near = []
         for w in st.session_state.waypoints[1:]:
             at = w.get("arr_type", "Direct")
@@ -588,15 +613,15 @@ if len(st.session_state.waypoints) > 1:
         to_list += [d["icao"] for d in vt_tdp_near]
         to_list = unique_keep_order(to_list)
 
-        st.subheader("VAC à consulter (suggestions)")
+        st.subheader("VAC à consulter (LFxx)")
         for icao in to_list:
             name = AIRPORTS.get(icao, {}).get("name", "")
             st.write(f"- **{icao}** — {name}")
 
         st.markdown("---")
-        st.subheader("Déroutements probables (≤ 15 NM autour arrivée)")
+        st.subheader("Déroutements probables (≤ 15 NM autour arrivée) — LFxx uniquement")
         if divers:
             for d in divers:
                 st.write(f"- **{d['icao']}** — {d['name']} ({d['d_nm']:.1f} NM)")
         else:
-            st.write("Aucun terrain trouvé dans 15 NM autour de l'arrivée (selon OurAirports).")
+            st.write("Aucun terrain LFxx trouvé dans 15 NM autour de l'arrivée.")
