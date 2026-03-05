@@ -38,6 +38,23 @@ def get_metar(icao):
         return r.text.split('\n')[1] if r.status_code == 200 else "METAR indisponible"
     except: return "Erreur METAR"
 
+# ─── TAF (simple, NOAA) ───
+@st.cache_data(ttl=600)
+def get_taf_cached(icao: str, wx_refresh: int) -> str:
+    try:
+        r = SESSION.get(
+            f"https://tgftp.nws.noaa.gov/data/forecasts/taf/stations/{icao}.TXT",
+            timeout=HTTP_TIMEOUT,
+        )
+        if r.status_code == 200:
+            lines = r.text.splitlines()
+            # Souvent: 1ère ligne = date, puis TAF sur les lignes suivantes
+            taf = "\n".join(lines[1:]).strip() if len(lines) > 1 else ""
+            return taf if taf else "TAF indisponible"
+        return "TAF indisponible"
+    except Exception:
+        return "Erreur TAF"
+
 def get_wind_v27_final(lat, lon, alt_ft, time_dt, manual_wind=None):
     if manual_wind: return manual_wind['wd'], manual_wind['ws'], "Manuel"
     target = min(PRESSURE_MAP.keys(), key=lambda x: abs(x - alt_ft))
@@ -104,8 +121,13 @@ with st.sidebar:
 # ─── NAVIGATION & CARTE ───
 metar_val = ""
 if st.session_state.waypoints:
-    metar_val = get_metar(st.session_state.waypoints[0]["name"])
-    st.code(f"🕒 METAR {st.session_state.waypoints[0]['name']} : {metar_val}", language="bash")
+    dep_icao = st.session_state.waypoints[0]["name"]
+
+    metar_val = get_metar_cached(dep_icao, st.session_state.wx_refresh)
+    taf_val = get_taf_cached(dep_icao, st.session_state.wx_refresh)
+
+    st.code(f"🕒 METAR {dep_icao} : {metar_val}", language="bash")
+    st.code(f"📄 TAF  {dep_icao} :\n{taf_val}", language="bash")
 
 col_map, col_ctrl = st.columns([2, 1])
 with col_ctrl:
