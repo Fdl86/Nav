@@ -195,19 +195,31 @@ def fmt_deg(x: float) -> str:
 
 
 # ─── PDF ───
-from fpdf import FPDF
+
+def _pdf_safe(s: object) -> str:
+    """Rend le texte compatible core fonts (latin-1) de fpdf2."""
+    if s is None:
+        return ""
+    s = str(s)
+    # remplacements utiles
+    s = s.replace("➔", "->").replace("→", "->").replace("—", "-").replace("–", "-")
+    # garde uniquement ce qui passe en latin-1
+    return s.encode("latin-1", "ignore").decode("latin-1")
 
 def create_pdf(df_nav, metar_text):
-
     pdf = FPDF(orientation="L", unit="mm", format="A4")
     pdf.add_page()
 
-    # ─── FOND TEMPLATE ───
+    # FOND TEMPLATE (adapte le chemin si besoin)
     pdf.image("lognava5.png", x=0, y=0, w=297, h=210)
 
+    pdf.set_text_color(0, 0, 0)
     pdf.set_font("helvetica", size=8)
 
-    # ─── POSITION TABLEAU NAV ───
+    # (optionnel) METAR quelque part
+    # pdf.set_xy(15, 18); pdf.cell(0, 5, _pdf_safe(metar_text))
+
+    # TABLE NAV (coordonnées à ajuster)
     start_x = 15
     start_y = 70
     row_h = 7
@@ -222,37 +234,35 @@ def create_pdf(df_nav, metar_text):
         "ETA": start_x + 155,
     }
 
-    for i, row in df_nav.iterrows():
-
+    for i, (_, row) in enumerate(df_nav.iterrows()):
         y = start_y + i * row_h
 
         pdf.set_xy(col["Branche"], y)
-        pdf.cell(50, row_h, str(row.get("Branche", "")))
+        pdf.cell(50, row_h, _pdf_safe(row.get("Branche", "")))
 
         pdf.set_xy(col["Cap"], y)
-        pdf.cell(18, row_h, str(row.get("Cap", "")), align="C")
+        pdf.cell(18, row_h, _pdf_safe(row.get("Cap", "")), align="C")
 
         pdf.set_xy(col["Vent"], y)
-        pdf.cell(35, row_h, str(row.get("Vent", "")))
+        pdf.cell(35, row_h, _pdf_safe(row.get("Vent", "")))
 
         pdf.set_xy(col["GS"], y)
-        pdf.cell(10, row_h, str(row.get("GS", "")), align="C")
+        pdf.cell(10, row_h, _pdf_safe(row.get("GS", "")), align="C")
 
         pdf.set_xy(col["EET"], y)
-        pdf.cell(15, row_h, str(row.get("EET", "")), align="C")
+        pdf.cell(15, row_h, _pdf_safe(row.get("EET", "")), align="C")
 
         pdf.set_xy(col["Fuel"], y)
-        pdf.cell(15, row_h, str(row.get("Fuel", "")), align="C")
+        pdf.cell(15, row_h, _pdf_safe(row.get("Fuel", "")), align="C")
 
         pdf.set_xy(col["ETA"], y)
-        pdf.cell(15, row_h, str(row.get("ETA", "")), align="C")
+        pdf.cell(15, row_h, _pdf_safe(row.get("ETA", "")), align="C")
 
     out = pdf.output(dest="S")
-
-    if isinstance(out, str):
-        out = out.encode("latin-1")
-
-    return bytes(out)
+    # fpdf2 peut renvoyer bytearray -> on convertit proprement
+    if isinstance(out, (bytes, bytearray)):
+        return bytes(out)
+    return out.encode("latin-1", "ignore")
 
 
 # ─────────────────────────── UI ───────────────────────────
