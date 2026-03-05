@@ -350,6 +350,7 @@ with st.sidebar:
 # ─── METAR + TAF DISPLAY ───
 metar_val = ""
 taf_val = ""
+st.write("DEBUG taf_val len =", len(taf_val), " / début =", repr(taf_val[:60]))
 
 if st.session_state.waypoints:
     dep_icao = st.session_state.waypoints[0]["name"]
@@ -358,7 +359,6 @@ if st.session_state.waypoints:
     taf_val = get_taf_cached(dep_icao, st.session_state.wx_refresh)
 
     st.code(f"🕒 METAR {dep_icao} : {metar_val}", language="text")
-    st.warning("DEBUG: je suis arrivé jusqu’au TAF ✅")
     st.code(f"📄 TAF  {dep_icao} :\n{taf_val}", language="text")
 
 
