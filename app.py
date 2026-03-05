@@ -166,11 +166,21 @@ def get_taf_cached(icao: str, wx_refresh: int) -> str:
             f"https://tgftp.nws.noaa.gov/data/forecasts/taf/stations/{icao}.TXT",
             timeout=HTTP_TIMEOUT,
         )
+
         if r.status_code == 200:
             lines = r.text.splitlines()
-            taf = "\n".join(lines[1:]).strip() if len(lines) > 1 else ""
-            return taf if taf else "TAF indisponible"
+
+            # supprimer lignes vides
+            lines = [l.strip() for l in lines if l.strip()]
+
+            # supprimer la ligne date NOAA
+            if len(lines) > 1:
+                return "\n".join(lines[1:])
+            else:
+                return "TAF indisponible"
+
         return "TAF indisponible"
+
     except Exception:
         return "Erreur TAF"
 
@@ -340,10 +350,13 @@ with st.sidebar:
 # ─── METAR + TAF DISPLAY ───
 metar_val = ""
 taf_val = ""
+
 if st.session_state.waypoints:
     dep_icao = st.session_state.waypoints[0]["name"]
+
     metar_val = get_metar_cached(dep_icao, st.session_state.wx_refresh)
     taf_val = get_taf_cached(dep_icao, st.session_state.wx_refresh)
+
     st.code(f"🕒 METAR {dep_icao} : {metar_val}", language="bash")
     st.code(f"📄 TAF {dep_icao} :\n{taf_val}", language="bash")
 
