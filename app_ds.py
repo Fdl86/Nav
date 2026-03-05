@@ -12,11 +12,11 @@ from fpdf import FPDF
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
 ELEVATION_URL = "https://api.open-meteo.com/v1/elevation"
 NOAA_DECL_URL = "https://www.ngdc.noaa.gov/geomag-web/calculators/calculateDeclination"
-
 PRESSURE_MAP = {1000: 975, 1500: 960, 2000: 950, 2500: 925, 3000: 900, 5000: 850, 7000: 750}
 HTTP_TIMEOUT = 8
 
-st.set_page_config(page_title="SkyAssistant V53.1", layout="wide")
+# ─── PAGE ───
+st.set_page_config(page_title="SkyAssistant V54", layout="wide")
 
 # ─── HIDE STREAMLIT DATAFRAME TOOLBAR ───
 st.markdown(
@@ -35,9 +35,8 @@ div[data-testid="stDataEditor"] [data-testid="stElementToolbar"] {
 @st.cache_resource
 def get_http_session() -> requests.Session:
     s = requests.Session()
-    s.headers.update({"User-Agent": "SkyAssistant/53.1"})
+    s.headers.update({"User-Agent": "SkyAssistant/54"})
     return s
-
 
 SESSION = get_http_session()
 
@@ -66,10 +65,57 @@ def load_airports():
     except Exception:
         return base
 
-
 AIRPORTS = load_airports()
 
-# ─── ELEVATION (ne pas cacher un 0 en cas d'échec) ───
+# ─── HELPERS ───
+def norm360(x: float) -> float:
+    return (x % 360.0 + 360.0) % 360.0
+
+def fmt_deg(x: float) -> str:
+    return f"{int(round(norm360(x))):03d}°"
+
+def _pdf_safe(s: object) -> str:
+    if s is None:
+        return ""
+    s = str(s)
+    s = s.replace("➔", "->").replace("→", "->").replace("—", "-").replace("–", "-")
+    return s.encode("latin-1", "ignore").decode("latin-1")
+
+def haversine_nm(lat1, lon1, lat2, lon2) -> float:
+    R_km = 6371.0
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = (math.sin(dlat / 2) ** 2 +
+         math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2)
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    km = R_km * c
+    return km / 1.852
+
+@st.cache_data(ttl=86400)
+def airports_df_fr():
+    rows = []
+    for icao, ap in AIRPORTS.items():
+        rows.append({"icao": icao, "name": ap.get("name", ""), "lat": ap.get("lat"), "lon": ap.get("lon")})
+    return pd.DataFrame(rows)
+
+def nearest_airfields(lat, lon, radius_nm=15.0, k=5, exclude_icao=None):
+    df = airports_df_fr().copy()
+    if exclude_icao:
+        df = df[df["icao"] != exclude_icao]
+    df["d_nm"] = df.apply(lambda r: haversine_nm(lat, lon, r["lat"], r["lon"]), axis=1)
+    df = df[df["d_nm"] <= radius_nm].sort_values("d_nm").head(k)
+    return df[["icao", "name", "d_nm"]].to_dict("records")
+
+def unique_keep_order(items):
+    seen = set()
+    out = []
+    for x in items:
+        if x and x not in seen:
+            seen.add(x)
+            out.append(x)
+    return out
+
+# ─── ELEVATION ───
 @st.cache_data(ttl=86400)
 def _elevation_ft_cached(lat: float, lon: float) -> int:
     r = SESSION.get(ELEVATION_URL, params={"latitude": lat, "longitude": lon}, timeout=HTTP_TIMEOUT)
@@ -77,13 +123,11 @@ def _elevation_ft_cached(lat: float, lon: float) -> int:
     j = r.json()
     return round(j.get("elevation", [0])[0] * 3.28084)
 
-
 def get_elevation_ft(lat: float, lon: float) -> int:
     try:
         return _elevation_ft_cached(lat, lon)
     except Exception:
         return 0
-
 
 # ─── METAR ───
 @st.cache_data(ttl=600)
@@ -99,7 +143,6 @@ def get_metar_cached(icao: str, wx_refresh: int) -> str:
         return "METAR indisponible"
     except Exception:
         return "Erreur METAR"
-
 
 # ─── DECLINAISON ───
 @st.cache_data(ttl=86400 * 30)
@@ -123,7 +166,6 @@ def get_declination_deg(lat: float, lon: float, date_utc: dt.datetime) -> float:
     except Exception:
         return 0.0
 
-
 # ─── WIND ───
 @st.cache_data(ttl=900)
 def get_wind_openmeteo_cached(lat: float, lon: float, lv: int, wx_refresh: int) -> dict:
@@ -137,7 +179,6 @@ def get_wind_openmeteo_cached(lat: float, lon: float, lv: int, wx_refresh: int) 
     }
     r = SESSION.get(OPEN_METEO_URL, params=params, timeout=HTTP_TIMEOUT)
     return r.json()
-
 
 def get_wind_v27_final(lat, lon, alt_ft, time_dt, manual_wind=None, wx_refresh: int = 0):
     if manual_wind:
@@ -184,26 +225,7 @@ def get_wind_v27_final(lat, lon, alt_ft, time_dt, manual_wind=None, wx_refresh: 
     except Exception:
         return 0.0, 0.0, "Err"
 
-
-# ─── NAV HELPERS ───
-def norm360(x: float) -> float:
-    return (x % 360.0 + 360.0) % 360.0
-
-
-def fmt_deg(x: float) -> str:
-    return f"{int(round(norm360(x))):03d}°"
-
-
 # ─── PDF ───
-
-def _pdf_safe(s: object) -> str:
-    """Rend le texte compatible core fonts (latin-1) de fpdf2."""
-    if s is None:
-        return ""
-    s = str(s)
-    s = s.replace("➔", "->").replace("→", "->").replace("—", "-").replace("–", "-")
-    return s.encode("latin-1", "ignore").decode("latin-1")
-
 def create_pdf(df_nav, metar_text):
     pdf = FPDF(orientation='P', unit='mm', format='A4')
     pdf.add_page()
@@ -243,9 +265,9 @@ def create_pdf(df_nav, metar_text):
         return bytes(out)
     return out.encode("latin-1", "ignore")
 
-# ─────────────────────────── UI ───────────────────────────
+# ─── SIDEBAR ───
 with st.sidebar:
-    st.title("✈️ SkyAssistant V53.1")
+    st.title("✈️ SkyAssistant V54")
 
     if st.button("🔄 Rafraîchir météo", use_container_width=True):
         st.session_state.wx_refresh += 1
@@ -253,41 +275,46 @@ with st.sidebar:
 
     search = st.text_input("🔍 Rechercher OACI", "").upper()
     sugg = [k for k in AIRPORTS.keys() if k.startswith(search)] if search else []
-    if sugg and st.button(f"Départ : {sugg[0]}", use_container_width=True):
-        ap = AIRPORTS[sugg[0]]
-        elev = get_elevation_ft(ap["lat"], ap["lon"])
-        st.session_state.waypoints = [
-            {
-                "name": sugg[0],
-                "lat": ap["lat"],
-                "lon": ap["lon"],
+
+    if sugg:
+        icao0 = sugg[0]
+        ap0 = AIRPORTS[icao0]
+        if st.button(f"Départ : {ap0['name']} ({icao0})", use_container_width=True):
+            elev = get_elevation_ft(ap0["lat"], ap0["lon"])
+            st.session_state.waypoints = [{
+                "name": icao0,
+                "lat": ap0["lat"],
+                "lon": ap0["lon"],
                 "alt": elev,
                 "elev": elev,
                 "arr_type": "Direct",
-            }
-        ]
-        st.rerun()
+            }]
+            st.rerun()
+
+    if st.session_state.waypoints:
+        dep_icao = st.session_state.waypoints[0]["name"]
+        dep_name = AIRPORTS.get(dep_icao, {}).get("name", dep_icao)
+        st.success(f"Départ sélectionné : {dep_name} ({dep_icao})")
 
     st.markdown("---")
     tas = st.number_input("TAS (kt)", 50, 250, 100, step=1)
     v_climb = st.number_input("Montée (ft/min)", 100, 2000, 840, step=10)
     v_descent = st.number_input("Descente (ft/min)", 100, 2000, 500, step=10)
     fuel_flow = st.number_input("Conso (L/h)", 1, 200, 25, step=1)
-
     dep_time = st.time_input("Heure départ (UTC)", value=dt.time(0, 0))
 
     if st.button("🗑️ Reset", use_container_width=True):
         st.session_state.waypoints = []
         st.rerun()
 
-# ─── METAR ───
+# ─── METAR DISPLAY ───
 metar_val = ""
 if st.session_state.waypoints:
     dep_icao = st.session_state.waypoints[0]["name"]
     metar_val = get_metar_cached(dep_icao, st.session_state.wx_refresh)
     st.code(f"🕒 METAR {dep_icao} : {metar_val}", language="bash")
 
-# ─── NAVIGATION & CARTE ───
+# ─── NAVIGATION & MAP ───
 col_map, col_ctrl = st.columns([2, 1])
 
 with col_ctrl:
@@ -314,36 +341,24 @@ with col_ctrl:
 
         elev2 = get_elevation_ft(la2, lo2)
 
-        st.session_state.waypoints.append(
-            {
-                "name": f"WP{len(st.session_state.waypoints)}",
-                "lat": la2,
-                "lon": lo2,
-                "tc": int(rv_in),
-                "dist": float(dist_in),
-                "alt": int(alt_in),
-                "manual_wind": m_wind,
-                "elev": elev2,
-                "arr_type": "Direct",
-            }
-        )
+        st.session_state.waypoints.append({
+            "name": f"WP{len(st.session_state.waypoints)}",
+            "lat": la2,
+            "lon": lo2,
+            "tc": int(rv_in),
+            "dist": float(dist_in),
+            "alt": int(alt_in),
+            "manual_wind": m_wind,
+            "elev": elev2,
+            "arr_type": "Direct",
+        })
         st.rerun()
 
 with col_map:
     if st.session_state.waypoints:
-        m = folium.Map(
-            location=[st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"]],
-            zoom_start=9,
-        )
-        folium.TileLayer(
-            tiles="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
-            attr="Google Satellite",
-            name="Vue Satellite",
-            overlay=False,
-            control=True,
-        ).add_to(m)
+        m = folium.Map(location=[st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"]], zoom_start=9)
+        folium.TileLayer(tiles="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}", attr="Google Satellite", name="Vue Satellite", overlay=False, control=True).add_to(m)
         folium.TileLayer("openstreetmap", name="Carte Standard").add_to(m)
-
         folium.PolyLine([[w["lat"], w["lon"]] for w in st.session_state.waypoints], color="red", weight=3).add_to(m)
 
         num_w = len(st.session_state.waypoints)
@@ -353,18 +368,14 @@ with col_map:
             elif i == num_w - 1:
                 icon_c, icon_t = "red", "flag"
             else:
-                icon_c, icon_t = "orange", "circle"  # point tournant plus raccord
+                icon_c, icon_t = "orange", "circle"
 
-            folium.Marker(
-                [w["lat"], w["lon"]],
-                popup=f"{w['name']}",
-                icon=folium.Icon(color=icon_c, icon=icon_t, prefix="fa"),
-            ).add_to(m)
+            folium.Marker([w["lat"], w["lon"]], popup=f"{w['name']}", icon=folium.Icon(color=icon_c, icon=icon_t, prefix="fa")).add_to(m)
 
         folium.LayerControl().add_to(m)
-        st_folium(m, width="100%", height=300, key="map_v53_1", returned_objects=[])
+        st_folium(m, width="100%", height=300, key="map_v54", returned_objects=[])
 
-# ─── LOG DE NAVIGATION & PROFIL ───
+# ─── LOG + PROFILE ───
 if len(st.session_state.waypoints) > 1:
     st.markdown("---")
     now_utc = dt.datetime.now(dt.timezone.utc)
@@ -405,7 +416,6 @@ if len(st.session_state.waypoints) > 1:
                 elev2 = float(elev_try)
                 w2["elev"] = elev2
 
-        # wind
         target = min(PRESSURE_MAP.keys(), key=lambda x: abs(x - alt_ft))
         lv = PRESSURE_MAP[target]
         wkey = (round(w2["lat"], 3), round(w2["lon"], 3), lv, st.session_state.wx_refresh)
@@ -416,9 +426,7 @@ if len(st.session_state.waypoints) > 1:
             if wkey in wind_local_cache:
                 wd, ws, src = wind_local_cache[wkey]
             else:
-                wd, ws, src = get_wind_v27_final(
-                    w2["lat"], w2["lon"], alt_ft, now_utc, manual_wind=None, wx_refresh=st.session_state.wx_refresh
-                )
+                wd, ws, src = get_wind_v27_final(w2["lat"], w2["lon"], alt_ft, now_utc, manual_wind=None, wx_refresh=st.session_state.wx_refresh)
                 wind_local_cache[wkey] = (wd, ws, src)
 
         wa = math.radians(wd - rv)
@@ -427,7 +435,6 @@ if len(st.session_state.waypoints) > 1:
         cap_vrai = norm360(rv + wca)
         gs = max(20.0, (float(tas) * math.cos(math.radians(wca))) - (ws * math.cos(wa)))
 
-        # declinaison & cap mag
         dkey = (round(w2["lat"], 2), round(w2["lon"], 2), dep_dt.date().isoformat())
         if dkey in decl_local_cache:
             decl = decl_local_cache[dkey]
@@ -445,7 +452,6 @@ if len(st.session_state.waypoints) > 1:
 
         tt_str = ""
 
-        # ── TOC (avec annotation graphique) ──
         if alt_ft > current_alt:
             t_climb = ((alt_ft - current_alt) / max(1e-9, float(v_climb))) * 60.0
             d_climb = gs * (t_climb / 3600.0)
@@ -454,12 +460,8 @@ if len(st.session_state.waypoints) > 1:
                 tt_str += f"TOC:{round(d_climb,1)}NM "
                 if d_climb < dist_nm:
                     x_toc = d_total + d_climb
-                    dist_p.append(x_toc)
-                    alt_p.append(alt_ft)
-                    terr_p.append(float(w1.get("elev", 0)))
-                    fig.add_annotation(
-                        x=x_toc, y=alt_ft, text=f"TOC {round(d_climb,1)}NM ({t_cl_str})", showarrow=True, ay=45
-                    )
+                    dist_p.append(x_toc); alt_p.append(alt_ft); terr_p.append(float(w1.get("elev", 0)))
+                    fig.add_annotation(x=x_toc, y=alt_ft, text=f"TOC {round(d_climb,1)}NM ({t_cl_str})", showarrow=True, ay=45)
 
         at = w2.get("arr_type", "Direct")
         if (i == len(st.session_state.waypoints) - 1) and at == "Direct":
@@ -470,72 +472,49 @@ if len(st.session_state.waypoints) > 1:
             t_desc = ((alt_ft - alt_t) / max(1e-9, float(v_descent))) * 60.0 if alt_ft > alt_t else 0.0
             d_desc = gs * (t_desc / 3600.0)
 
-            # ── TOD (avec annotation graphique) ──
             if d_desc > 0.1:
                 t_de_str = f"{int(t_desc//60):02d}:{int(t_desc%60):02d}"
                 tt_str += f"TOD:{round(d_desc,1)}NM"
                 if d_desc < dist_nm:
                     x_tod = d_total + (dist_nm - d_desc)
-                    dist_p.append(x_tod)
-                    alt_p.append(alt_ft)
-                    terr_p.append(elev2)
-                    fig.add_annotation(
-                        x=x_tod, y=alt_ft, text=f"TOD {round(d_desc,1)}NM ({t_de_str})", showarrow=True, ay=-45
-                    )
+                    dist_p.append(x_tod); alt_p.append(alt_ft); terr_p.append(elev2)
+                    fig.add_annotation(x=x_tod, y=alt_ft, text=f"TOD {round(d_desc,1)}NM ({t_de_str})", showarrow=True, ay=-45)
 
-            # ── Label VT/TDP + vline ──
             label_dest = "VT" if "VT" in at else "TDP"
-            fig.add_annotation(
-                x=d_total + dist_nm,
-                y=alt_t,
-                text=f"<b>{label_dest} {w2['name']}</b>",
-                showarrow=False,
-                yshift=15,
-                font=dict(color="orange", size=11),
-            )
+            fig.add_annotation(x=d_total + dist_nm, y=alt_t, text=f"<b>{label_dest} {w2['name']}</b>", showarrow=False, yshift=15, font=dict(color="orange", size=11))
 
             d_total += dist_nm
-            dist_p.append(d_total)
-            alt_p.append(alt_t)
-            terr_p.append(elev2)
-
-            dist_p.append(d_total)
-            alt_p.append(elev2)
-            terr_p.append(elev2)
-
+            dist_p.append(d_total); alt_p.append(alt_t); terr_p.append(elev2)
+            dist_p.append(d_total); alt_p.append(elev2); terr_p.append(elev2)
             fig.add_vline(x=d_total, line_width=2, line_dash="dash", line_color="orange")
             current_alt = elev2
         else:
             d_total += dist_nm
-            dist_p.append(d_total)
-            alt_p.append(alt_ft)
-            terr_p.append(elev2)
+            dist_p.append(d_total); alt_p.append(alt_ft); terr_p.append(elev2)
             current_alt = alt_ft
 
         drift_txt = f"{wca:+.0f}°"
         cap_txt = f"{fmt_deg(cap_mag)} ({drift_txt})"
 
-        nav_data.append(
-            {
-                "Branche": f"{w1['name']}➔{w2['name']}",
-                "Rv": f"{int(round(norm360(rv))):03d}",
-                "Cap": cap_txt,
-                "Vent": f"{int(wd)}/{int(ws)}kt ({src})",
-                "GS": f"{int(gs)}",
-                "EET": f"{int(seg_sec//60):02d}:{int(seg_sec%60):02d}",
-                "Fuel": f"{fuel_branch:.1f}L",
-                "ETA": eta_dt.strftime("%H:%M"),
-                "TOC/TOD": tt_str.strip(),
-                "Arrivée": at,
-                "❌": False,
-                "_idx": i,
-            }
-        )
+        nav_data.append({
+            "Branche": f"{w1['name']}➔{w2['name']}",
+            "Vent": f"{int(wd)}/{int(ws)}kt ({src})",
+            "GS": f"{int(gs)}kt",
+            "EET": f"{int(seg_sec//60):02d}:{int(seg_sec%60):02d}",
+            "Fuel": f"{fuel_branch:.1f}L",
+            "TOC/TOD": tt_str.strip(),
+            "Arrivée": at,
+            "❌": False,
+            "_idx": i,
+            "ETA": eta_dt.strftime("%H:%M"),
+            "Cap": cap_txt,
+        })
 
-    st.subheader("📋 Log de Navigation")
     df_nav = pd.DataFrame(nav_data)
 
+    st.subheader("📋 Log de Navigation")
     df_screen = df_nav[["Branche", "Cap", "Vent", "GS", "EET", "Fuel", "ETA", "TOC/TOD", "Arrivée", "❌", "_idx"]].copy()
+
     edited_log = st.data_editor(
         df_screen,
         column_config={
@@ -547,9 +526,7 @@ if len(st.session_state.waypoints) > 1:
             "Fuel": st.column_config.TextColumn("Fuel", width="small", disabled=True),
             "ETA": st.column_config.TextColumn("ETA", width="small", disabled=True),
             "TOC/TOD": st.column_config.TextColumn("TOC/TOD", width="small", disabled=True),
-            "Arrivée": st.column_config.SelectboxColumn(
-                "Arrivée", options=["Direct", "TDP (1000ft)", "VT (1500ft)"], width="small"
-            ),
+            "Arrivée": st.column_config.SelectboxColumn("Arrivée", options=["Direct", "TDP (1000ft)", "VT (1500ft)"], width="small"),
             "❌": st.column_config.CheckboxColumn("❌", width="small"),
             "_idx": None,
         },
@@ -566,30 +543,60 @@ if len(st.session_state.waypoints) > 1:
         st.session_state.waypoints = new_wps
         st.rerun()
 
-    df_pdf = df_nav[["Branche", "Rv", "Cap", "Vent", "GS", "EET", "Fuel", "TOC/TOD", "Arrivée"]].copy()
-    st.download_button(
-        label="📥 Log PDF",
-        data=create_pdf(df_pdf, metar_val),
-        file_name="nav_log.pdf",
-        use_container_width=True,
-    )
+    # PDF download
+    df_pdf = df_nav[["Branche", "Vent", "GS", "EET", "Fuel", "TOC/TOD", "Arrivée"]].copy()
+    st.download_button(label="📥 Log PDF", data=create_pdf(df_pdf, metar_val), file_name="nav_log.pdf", use_container_width=True)
 
-    # ─── GRAPHIQUE (avec éléments terrain + profil + annotations) ───
+    # Graph
     fig.add_trace(go.Scatter(x=dist_p, y=terr_p, fill="tozeroy", name="Relief", line_color="sienna"))
     fig.add_trace(go.Scatter(x=dist_p, y=alt_p, name="Profil Avion", line=dict(color="royalblue", width=4)))
-
-    fig.update_layout(
-        width=1000,
-        height=350,
-        xaxis=dict(fixedrange=True, tickformat=".1f", title="Distance (NM)"),
-        yaxis=dict(fixedrange=True, title="Altitude (ft)"),
-        margin=dict(l=40, r=40, t=20, b=40),
-        showlegend=False,
-    )
-
-    st.markdown(
-        '<div style="overflow-x: auto; width: 100%; border: 1px solid #444; border-radius: 10px;">',
-        unsafe_allow_html=True,
-    )
+    fig.update_layout(width=1000, height=350, xaxis=dict(fixedrange=True, tickformat=".1f", title="Distance (NM)"),
+                      yaxis=dict(fixedrange=True, title="Altitude (ft)"),
+                      margin=dict(l=40, r=40, t=20, b=40), showlegend=False)
+    st.markdown('<div style="overflow-x: auto; width: 100%; border: 1px solid #444; border-radius: 10px;">', unsafe_allow_html=True)
     st.plotly_chart(fig, use_container_width=False, config={"staticPlot": True, "displayModeBar": False})
     st.markdown("</div>", unsafe_allow_html=True)
+
+    # ─── BRIEFING ───
+    dep_icao = st.session_state.waypoints[0]["name"]
+    with st.expander("🧾 Briefing", expanded=True):
+        st.link_button("📌 SOFIA Briefing (NOTAM)", "https://sofia-briefing.aviation-civile.gouv.fr/sofia/pages/homepage.html")
+        st.link_button("📚 SIA / Visualisateur AIP", "https://www.sia.aviation-civile.gouv.fr/vaip")
+
+        st.markdown("---")
+
+        to_list = [dep_icao]
+        arr_lat = st.session_state.waypoints[-1]["lat"]
+        arr_lon = st.session_state.waypoints[-1]["lon"]
+
+        # arrivée si ICAO différent (si WP, il n'est pas dans AIRPORTS mais c'est OK)
+        arr_icao = st.session_state.waypoints[-1]["name"]
+        if arr_icao != dep_icao and arr_icao in AIRPORTS:
+            to_list.append(arr_icao)
+
+        # déroutements (15NM autour arrivée)
+        divers = nearest_airfields(arr_lat, arr_lon, radius_nm=15.0, k=5, exclude_icao=dep_icao)
+
+        # proches VT/TDP
+        vt_tdp_near = []
+        for w in st.session_state.waypoints[1:]:
+            at = w.get("arr_type", "Direct")
+            if at != "Direct":
+                vt_tdp_near.extend(nearest_airfields(w["lat"], w["lon"], radius_nm=15.0, k=3, exclude_icao=None))
+
+        to_list += [d["icao"] for d in divers]
+        to_list += [d["icao"] for d in vt_tdp_near]
+        to_list = unique_keep_order(to_list)
+
+        st.subheader("VAC à consulter (suggestions)")
+        for icao in to_list:
+            name = AIRPORTS.get(icao, {}).get("name", "")
+            st.write(f"- **{icao}** — {name}")
+
+        st.markdown("---")
+        st.subheader("Déroutements probables (≤ 15 NM autour arrivée)")
+        if divers:
+            for d in divers:
+                st.write(f"- **{d['icao']}** — {d['name']} ({d['d_nm']:.1f} NM)")
+        else:
+            st.write("Aucun terrain trouvé dans 15 NM autour de l'arrivée (selon OurAirports).")
