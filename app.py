@@ -162,27 +162,18 @@ def get_metar_cached(icao: str, wx_refresh: int) -> str:
 @st.cache_data(ttl=600)
 def get_taf_cached(icao: str, wx_refresh: int) -> str:
     try:
-        r = SESSION.get(
-            f"https://tgftp.nws.noaa.gov/data/forecasts/taf/stations/{icao}.TXT",
-            timeout=HTTP_TIMEOUT,
-        )
+        url = f"https://tgftp.nws.noaa.gov/data/forecasts/taf/stations/{icao}.TXT"
+        r = SESSION.get(url, timeout=HTTP_TIMEOUT)
+        if r.status_code != 200:
+            return f"TAF indisponible (HTTP {r.status_code})"
 
-        if r.status_code == 200:
-            lines = r.text.splitlines()
+        lines = [l.strip() for l in r.text.splitlines() if l.strip()]
+        if len(lines) <= 1:
+            return "TAF indisponible"
 
-            # supprimer lignes vides
-            lines = [l.strip() for l in lines if l.strip()]
-
-            # supprimer la ligne date NOAA
-            if len(lines) > 1:
-                return "\n".join(lines[1:])
-            else:
-                return "TAF indisponible"
-
-        return "TAF indisponible"
-
-    except Exception:
-        return "Erreur TAF"
+        return "\n".join(lines[1:])  # saute la ligne date
+    except Exception as e:
+        return f"Erreur TAF: {e}"
 
 # ─── DECLINAISON ───
 @st.cache_data(ttl=86400 * 30)
