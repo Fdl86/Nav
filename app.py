@@ -357,9 +357,9 @@ if st.session_state.waypoints:
     metar_val = get_metar_cached(dep_icao, st.session_state.wx_refresh)
     taf_val = get_taf_cached(dep_icao, st.session_state.wx_refresh)
 
-    st.code(f"🕒 METAR {dep_icao} : {metar_val}", language="bash")
-    st.code(f"📄 TAF {dep_icao} :\n{taf_val}", language="bash")
-    st.write(taf_val)
+    st.code(f"🕒 METAR {dep_icao} : {metar_val}", language="text")
+    st.warning("DEBUG: je suis arrivé jusqu’au TAF ✅")
+    st.code(f"📄 TAF  {dep_icao} :\n{taf_val}", language="text")
 
 
 # ─── NAVIGATION & MAP ───
