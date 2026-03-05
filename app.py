@@ -359,8 +359,8 @@ if st.session_state.waypoints:
 
     st.code(f"🕒 METAR {dep_icao} : {metar_val}", language="bash")
     st.code(f"📄 TAF {dep_icao} :\n{taf_val}", language="bash")
+    st.write(taf_val)
 
-st.write(taf_val)
 
 # ─── NAVIGATION & MAP ───
 col_map, col_ctrl = st.columns([2, 1])
