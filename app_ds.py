@@ -15,6 +15,7 @@ ELEVATION_URL = "https://api.open-meteo.com/v1/elevation"
 NOAA_DECL_URL = "https://www.ngdc.noaa.gov/geomag-web/calculators/calculateDeclination"
 PRESSURE_MAP = {1000: 975, 1500: 960, 2000: 950, 2500: 925, 3000: 900, 5000: 850, 7000: 750}
 HTTP_TIMEOUT = 8
+DIVERT_RADIUS_NM = 20.0
 
 # ─── PAGE ───
 st.set_page_config(page_title="SkyAssistant V54.1", layout="wide")
@@ -600,14 +601,14 @@ if len(st.session_state.waypoints) > 1:
             to_list.append(arr_icao)
 
         # déroutements (15NM autour arrivée) -> déjà filtrés LFxx
-        divers = nearest_airfields(arr_lat, arr_lon, radius_nm=15.0, k=5, exclude_icao=dep_icao)
+        divers = nearest_airfields(arr_lat, arr_lon, radius_nm=DIVERT_RADIUS_NM, k=5, exclude_icao=dep_icao)
 
         # proches VT/TDP -> déjà filtrés LFxx
         vt_tdp_near = []
         for w in st.session_state.waypoints[1:]:
             at = w.get("arr_type", "Direct")
             if at != "Direct":
-                vt_tdp_near.extend(nearest_airfields(w["lat"], w["lon"], radius_nm=15.0, k=3, exclude_icao=None))
+                vt_tdp_near.extend(nearest_airfields(w["lat"], w["lon"], radius_nm=DIVERT_RADIUS_NM, k=3, exclude_icao=None))
 
         to_list += [d["icao"] for d in divers]
         to_list += [d["icao"] for d in vt_tdp_near]
