@@ -115,7 +115,12 @@ def nearest_airfields(lat, lon, radius_nm=15.0, k=5, exclude_icao=None):
     df = airports_df_fr_lf().copy()
     if exclude_icao and is_lf_icao(exclude_icao):
         df = df[df["icao"] != exclude_icao]
-    df["d_nm"] = df.apply(lambda r: haversine_nm(lat, lon, r["lat"], r["lon"]), axis=1)
+    df["d_nm"] =lat_arr = df["lat"].values
+    lon_arr = df["lon"].values
+        df["d_nm"] = [
+        haversine_nm(lat, lon, lat2, lon2)
+        for lat2, lon2 in zip(lat_arr, lon_arr)
+    ]
     df = df[df["d_nm"] <= radius_nm].sort_values("d_nm").head(k)
     return df[["icao", "name", "d_nm"]].to_dict("records")
 
@@ -128,17 +133,35 @@ def unique_keep_order(items):
             out.append(x)
     return out
 
-# ─── ELEVATION ───
+# ─── ELEVATION (OPTIMISÉ AVEC CACHE LOCAL) ───
+
 @st.cache_data(ttl=86400)
 def _elevation_ft_cached(lat: float, lon: float) -> int:
-    r = SESSION.get(ELEVATION_URL, params={"latitude": lat, "longitude": lon}, timeout=HTTP_TIMEOUT)
+    r = SESSION.get(
+        ELEVATION_URL,
+        params={"latitude": lat, "longitude": lon},
+        timeout=HTTP_TIMEOUT,
+    )
     r.raise_for_status()
     j = r.json()
     return round(j.get("elevation", [0])[0] * 3.28084)
 
+
+# cache mémoire local pour éviter appels API répétés
+_elev_local_cache = {}
+
 def get_elevation_ft(lat: float, lon: float) -> int:
     try:
-        return _elevation_ft_cached(lat, lon)
+        key = (round(lat, 3), round(lon, 3))
+
+        if key in _elev_local_cache:
+            return _elev_local_cache[key]
+
+        elev = _elevation_ft_cached(lat, lon)
+        _elev_local_cache[key] = elev
+
+        return elev
+
     except Exception:
         return 0
 
@@ -388,8 +411,7 @@ with col_ctrl:
             "elev": elev2,
             "arr_type": "Direct",
         })
-        st.rerun()
-
+       
 with col_map:
     if st.session_state.waypoints:
         m = folium.Map(location=[st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"]], zoom_start=9)
