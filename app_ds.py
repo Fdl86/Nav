@@ -576,27 +576,27 @@ if len(st.session_state.waypoints) > 1:
 
     if edited_log.to_dict("records") != df_screen.to_dict("records"):
 
-    new_wps = [st.session_state.waypoints[0]]
-
-    for _, row in edited_log.iterrows():
-        if not row["❌"]:
-            wp = st.session_state.waypoints[int(row["_idx"])].copy()
-
-            # sauvegarde du type d'arrivée
-            wp["arr_type"] = row["Arrivée"]
-
-            # sauvegarde du nom de branche modifié
-            branche_txt = str(row["Branche"])
-
-            if "➔" in branche_txt:
-                wp["name"] = branche_txt.split("➔", 1)[1].strip()
-            elif "->" in branche_txt:
-                wp["name"] = branche_txt.split("->", 1)[1].strip()
-
-            new_wps.append(wp)
-
-    st.session_state.waypoints = new_wps
-    st.rerun()
+        new_wps = [st.session_state.waypoints[0]]
+    
+        for _, row in edited_log.iterrows():
+            if not row["❌"]:
+                wp = st.session_state.waypoints[int(row["_idx"])].copy()
+    
+                # sauvegarde du type d'arrivée
+                wp["arr_type"] = row["Arrivée"]
+    
+                # sauvegarde du nom de branche modifié
+                branche_txt = str(row["Branche"])
+    
+                if "➔" in branche_txt:
+                    wp["name"] = branche_txt.split("➔", 1)[1].strip()
+                elif "->" in branche_txt:
+                    wp["name"] = branche_txt.split("->", 1)[1].strip()
+    
+                new_wps.append(wp)
+    
+        st.session_state.waypoints = new_wps
+        st.rerun()
 
     df_pdf = df_nav[["Branche", "Vent", "GS", "EET", "Fuel", "TOC/TOD", "Arrivée"]].copy()
     st.download_button(label="📥 Log PDF", data=create_pdf(df_pdf, metar_val), file_name="nav_log.pdf", use_container_width=True)
