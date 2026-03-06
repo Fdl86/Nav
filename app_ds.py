@@ -19,7 +19,7 @@ HTTP_TIMEOUT = 8
 DIVERT_RADIUS_NM = 20.0  # rayon déroutements (NM)
 
 # ─── PAGE ───
-st.set_page_config(page_title="SkyAssistant V54.3", layout="wide")
+st.set_page_config(page_title="SkyAssistant V55", layout="wide")
 
 # ─── HIDE STREAMLIT DATAFRAME TOOLBAR ───
 st.markdown(
