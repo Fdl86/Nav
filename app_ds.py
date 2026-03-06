@@ -574,7 +574,7 @@ if len(st.session_state.waypoints) > 1:
         hide_index=True,
     )
 
-    if not edited_log.equals(df_screen):
+    if edited_log.to_dict("records") != df_screen.to_dict("records"):
         new_wps = [st.session_state.waypoints[0]]
         for _, row in edited_log.iterrows():
             if not row["❌"]:
