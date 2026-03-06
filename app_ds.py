@@ -489,7 +489,7 @@ if len(st.session_state.waypoints) > 1:
 
         target = min(PRESSURE_MAP.keys(), key=lambda x: abs(x - alt_ft))
         lv = PRESSURE_MAP[target]
-        wkey = (round(w2["lat"], 3), round(w2["lon"], 3), lv, st.session_state.wx_refresh)
+        wkey = (round(w2["lat"], 2), round(w2["lon"], 2), lv, st.session_state.wx_refresh)
 
         if manual:
             wd, ws, src = float(manual["wd"]), float(manual["ws"]), "Manuel"
