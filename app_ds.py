@@ -433,7 +433,7 @@ with col_map:
             folium.Marker([w["lat"], w["lon"]], popup=f"{w['name']}", icon=folium.Icon(color=icon_c, icon=icon_t, prefix="fa")).add_to(m)
 
         folium.LayerControl().add_to(m)
-        st_folium(m, width="100%", height=300, key="map_v54_3", returned_objects=[])
+        st_folium(m, width="100%", height=300, key="map_v55", returned_objects=[])
 
 # ─── LOG + PROFILE ───
 if len(st.session_state.waypoints) > 1:
