@@ -580,9 +580,12 @@ if len(st.session_state.waypoints) > 1:
     for _, row in edited_log.iterrows():
         if not row["❌"]:
             wp = st.session_state.waypoints[int(row["_idx"])].copy()
-            wp["arr_type"] = row["Arrivée"]
-            branche_txt = str(row["Branche"])
 
+            # Sauvegarde du type d'arrivée
+            wp["arr_type"] = row["Arrivée"]
+
+            # Sauvegarde du nom de destination de la branche
+            branche_txt = str(row["Branche"])
             if "➔" in branche_txt:
                 wp["name"] = branche_txt.split("➔", 1)[1].strip()
             elif "->" in branche_txt:
