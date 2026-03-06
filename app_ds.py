@@ -15,10 +15,11 @@ ELEVATION_URL = "https://api.open-meteo.com/v1/elevation"
 NOAA_DECL_URL = "https://www.ngdc.noaa.gov/geomag-web/calculators/calculateDeclination"
 PRESSURE_MAP = {1000: 975, 1500: 960, 2000: 950, 2500: 925, 3000: 900, 5000: 850, 7000: 750}
 HTTP_TIMEOUT = 8
-DIVERT_RADIUS_NM = 20.0
+
+DIVERT_RADIUS_NM = 20.0  # rayon déroutements (NM)
 
 # ─── PAGE ───
-st.set_page_config(page_title="SkyAssistant V54.1", layout="wide")
+st.set_page_config(page_title="SkyAssistant V54.3", layout="wide")
 
 # ─── HIDE STREAMLIT DATAFRAME TOOLBAR ───
 st.markdown(
@@ -37,7 +38,7 @@ div[data-testid="stDataEditor"] [data-testid="stElementToolbar"] {
 @st.cache_resource
 def get_http_session() -> requests.Session:
     s = requests.Session()
-    s.headers.update({"User-Agent": "SkyAssistant/54.1"})
+    s.headers.update({"User-Agent": "SkyAssistant/54.3"})
     return s
 
 SESSION = get_http_session()
@@ -59,7 +60,7 @@ def load_airports():
         )
         fr = df[(df["iso_country"] == "FR") & (df["type"].isin(["large_airport", "medium_airport", "small_airport"]))]
 
-        # IMPORTANT: on ne garde QUE les ident ICAO "LF??"
+        # IMPORTANT: ne garder que LFxx (évite FR-1070 etc.)
         fr = fr[fr["ident"].astype(str).str.match(r"^LF[A-Z0-9]{2}$")]
 
         downloaded = {
@@ -104,7 +105,6 @@ def haversine_nm(lat1, lon1, lat2, lon2) -> float:
 
 @st.cache_data(ttl=86400)
 def airports_df_fr_lf():
-    # Seulement LFxx (on ne peut plus sortir FR-xxxx)
     rows = []
     for icao, ap in AIRPORTS.items():
         if is_lf_icao(icao):
@@ -115,7 +115,6 @@ def nearest_airfields(lat, lon, radius_nm=15.0, k=5, exclude_icao=None):
     df = airports_df_fr_lf().copy()
     if exclude_icao and is_lf_icao(exclude_icao):
         df = df[df["icao"] != exclude_icao]
-    # calcul distance
     df["d_nm"] = df.apply(lambda r: haversine_nm(lat, lon, r["lat"], r["lon"]), axis=1)
     df = df[df["d_nm"] <= radius_nm].sort_values("d_nm").head(k)
     return df[["icao", "name", "d_nm"]].to_dict("records")
@@ -157,6 +156,23 @@ def get_metar_cached(icao: str, wx_refresh: int) -> str:
         return "METAR indisponible"
     except Exception:
         return "Erreur METAR"
+
+# ─── TAF ───
+@st.cache_data(ttl=600)
+def get_taf_cached(icao: str, wx_refresh: int) -> str:
+    try:
+        r = SESSION.get(
+            f"https://tgftp.nws.noaa.gov/data/forecasts/taf/stations/{icao}.TXT",
+            timeout=HTTP_TIMEOUT,
+        )
+        if r.status_code == 200:
+            lines = [l.strip() for l in r.text.splitlines() if l.strip()]
+            if len(lines) > 1:
+                return "\n".join(lines[1:])  # saute la ligne date
+            return "TAF indisponible"
+        return f"TAF indisponible (HTTP {r.status_code})"
+    except Exception as e:
+        return f"Erreur TAF: {e}"
 
 # ─── DECLINAISON ───
 @st.cache_data(ttl=86400 * 30)
@@ -281,7 +297,7 @@ def create_pdf(df_nav, metar_text):
 
 # ─── SIDEBAR ───
 with st.sidebar:
-    st.title("✈️ SkyAssistant V54.1")
+    st.title("✈️ SkyAssistant V54.3")
 
     if st.button("🔄 Rafraîchir météo", use_container_width=True):
         st.session_state.wx_refresh += 1
@@ -321,12 +337,18 @@ with st.sidebar:
         st.session_state.waypoints = []
         st.rerun()
 
-# ─── METAR DISPLAY ───
+# ─────────────────────────────────────────────────────────────
+# METAR + TAF (AU TOP, TOUJOURS VISIBLE APRÈS SÉLECTION DÉPART)
+# ─────────────────────────────────────────────────────────────
 metar_val = ""
+taf_val = ""
 if st.session_state.waypoints:
     dep_icao = st.session_state.waypoints[0]["name"]
     metar_val = get_metar_cached(dep_icao, st.session_state.wx_refresh)
-    st.code(f"🕒 METAR {dep_icao} : {metar_val}", language="bash")
+    taf_val = get_taf_cached(dep_icao, st.session_state.wx_refresh)
+
+    st.code(f"🕒 METAR {dep_icao} : {metar_val}", language="text")
+    st.code(f"📄 TAF  {dep_icao} :\n{taf_val}", language="text")
 
 # ─── NAVIGATION & MAP ───
 col_map, col_ctrl = st.columns([2, 1])
@@ -387,7 +409,7 @@ with col_map:
             folium.Marker([w["lat"], w["lon"]], popup=f"{w['name']}", icon=folium.Icon(color=icon_c, icon=icon_t, prefix="fa")).add_to(m)
 
         folium.LayerControl().add_to(m)
-        st_folium(m, width="100%", height=300, key="map_v54_1", returned_objects=[])
+        st_folium(m, width="100%", height=300, key="map_v54_3", returned_objects=[])
 
 # ─── LOG + PROFILE ───
 if len(st.session_state.waypoints) > 1:
@@ -562,11 +584,9 @@ if len(st.session_state.waypoints) > 1:
         st.session_state.waypoints = new_wps
         st.rerun()
 
-    # PDF download
     df_pdf = df_nav[["Branche", "Vent", "GS", "EET", "Fuel", "TOC/TOD", "Arrivée"]].copy()
     st.download_button(label="📥 Log PDF", data=create_pdf(df_pdf, metar_val), file_name="nav_log.pdf", use_container_width=True)
 
-    # Graph
     fig.add_trace(go.Scatter(x=dist_p, y=terr_p, fill="tozeroy", name="Relief", line_color="sienna"))
     fig.add_trace(go.Scatter(x=dist_p, y=alt_p, name="Profil Avion", line=dict(color="royalblue", width=4)))
     fig.update_layout(
@@ -580,7 +600,6 @@ if len(st.session_state.waypoints) > 1:
     st.plotly_chart(fig, use_container_width=False, config={"staticPlot": True, "displayModeBar": False})
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # ─── BRIEFING ───
     dep_icao = st.session_state.waypoints[0]["name"]
     with st.expander("🧾 Briefing", expanded=True):
         st.link_button("📌 SOFIA Briefing (NOTAM)", "https://sofia-briefing.aviation-civile.gouv.fr/sofia/pages/homepage.html")
@@ -595,15 +614,12 @@ if len(st.session_state.waypoints) > 1:
         arr_lat = st.session_state.waypoints[-1]["lat"]
         arr_lon = st.session_state.waypoints[-1]["lon"]
 
-        # arrivée seulement si c'est un vrai ICAO LFxx différent
         arr_icao = st.session_state.waypoints[-1]["name"]
         if is_lf_icao(arr_icao) and arr_icao != dep_icao:
             to_list.append(arr_icao)
 
-        # déroutements (15NM autour arrivée) -> déjà filtrés LFxx
         divers = nearest_airfields(arr_lat, arr_lon, radius_nm=DIVERT_RADIUS_NM, k=5, exclude_icao=dep_icao)
 
-        # proches VT/TDP -> déjà filtrés LFxx
         vt_tdp_near = []
         for w in st.session_state.waypoints[1:]:
             at = w.get("arr_type", "Direct")
@@ -620,9 +636,9 @@ if len(st.session_state.waypoints) > 1:
             st.write(f"- **{icao}** — {name}")
 
         st.markdown("---")
-        st.subheader("Déroutements probables (≤ 15 NM autour arrivée) — LFxx uniquement")
+        st.subheader(f"Déroutements probables (≤ {DIVERT_RADIUS_NM:.0f} NM autour arrivée) — LFxx uniquement")
         if divers:
             for d in divers:
                 st.write(f"- **{d['icao']}** — {d['name']} ({d['d_nm']:.1f} NM)")
         else:
-            st.write("Aucun terrain LFxx trouvé dans 15 NM autour de l'arrivée.")
+            st.write("Aucun terrain LFxx trouvé dans le rayon.")
