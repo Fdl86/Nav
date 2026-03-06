@@ -395,8 +395,8 @@ with st.sidebar:
 
     if st.session_state.waypoints:
         with st.expander("🧾 Briefing", expanded=False):
-            st.link_button("📌 SOFIA Briefing (NOTAM)", "https://sofia-briefing.aviation-civile.gouv.fr/sofia/pages/homepage.html")
-            st.link_button("📚 SIA / Visualisateur AIP", "https://www.sia.aviation-civile.gouv.fr/vaip")
-    
-            st.markdown("---")
-            st.caption("Briefing volontairement léger : météo et liens officiels, sans suggérer de déroutements.")
+        st.link_button("📌 SOFIA Briefing (NOTAM)", "https://sofia-briefing.aviation-civile.gouv.fr/sofia/pages/homepage.html")
+        st.link_button("📚 SIA / Visualisateur AIP", "https://www.sia.aviation-civile.gouv.fr/vaip")
+        
+        st.markdown("---")
+        st.caption("Briefing volontairement léger : météo et liens officiels, sans suggérer de déroutements.")
