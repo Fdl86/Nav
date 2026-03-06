@@ -38,7 +38,7 @@ div[data-testid="stDataEditor"] [data-testid="stElementToolbar"] {
 @st.cache_resource
 def get_http_session() -> requests.Session:
     s = requests.Session()
-    s.headers.update({"User-Agent": "SkyAssistant/54.3"})
+    s.headers.update({"User-Agent": "SkyAssistant/55"})
     return s
 
 SESSION = get_http_session()
@@ -322,7 +322,7 @@ def create_pdf(df_nav, metar_text):
 
 # ─── SIDEBAR ───
 with st.sidebar:
-    st.title("✈️ SkyAssistant V54.3")
+    st.title("✈️ SkyAssistant V55")
 
     if st.button("🔄 Rafraîchir météo", use_container_width=True):
         st.session_state.wx_refresh += 1
