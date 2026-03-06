@@ -116,10 +116,12 @@ def nearest_airfields(lat, lon, radius_nm=15.0, k=5, exclude_icao=None):
     if exclude_icao and is_lf_icao(exclude_icao):
         df = df[df["icao"] != exclude_icao]
     df["d_nm"] =lat_arr = df["lat"].values
+    lat_arr = df["lat"].values
     lon_arr = df["lon"].values
+    
     df["d_nm"] = [
-    haversine_nm(lat, lon, lat2, lon2)
-    for lat2, lon2 in zip(lat_arr, lon_arr)
+        haversine_nm(lat, lon, lat2, lon2)
+        for lat2, lon2 in zip(lat_arr, lon_arr)
     ]
     df = df[df["d_nm"] <= radius_nm].sort_values("d_nm").head(k)
     return df[["icao", "name", "d_nm"]].to_dict("records")
