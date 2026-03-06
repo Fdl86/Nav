@@ -224,9 +224,12 @@ def get_declination_deg(lat: float, lon: float, date_utc: dt.datetime) -> float:
 # ─── WIND ───
 @st.cache_data(ttl=900)
 def get_wind_openmeteo_cached(lat: float, lon: float, lv: int, wx_refresh: int) -> dict:
+    lat_q = round(lat, 2)
+    lon_q = round(lon, 2)
+
     params = {
-        "latitude": lat,
-        "longitude": lon,
+        "latitude": lat_q,
+        "longitude": lon_q,
         "hourly": f"wind_speed_{lv}hPa,wind_direction_{lv}hPa",
         "models": "icon_d2,meteofrance_arome_france_hd,gfs_seamless",
         "wind_speed_unit": "kn",
@@ -249,18 +252,18 @@ def get_wind_v27_final(lat, lon, alt_ft, time_dt, manual_wind=None, wx_refresh: 
         if not times:
             return 0.0, 0.0, "Err"
 
-        def pick(prefix: str):
+        def pick_model(prefix: str):
             ws = h.get(f"wind_speed_{lv}hPa_{prefix}")
             wd = h.get(f"wind_direction_{lv}hPa_{prefix}")
             if ws and wd and ws[0] is not None and wd[0] is not None:
                 return wd, ws
             return None
 
-        picked = pick("icon_d2")
+        picked = pick_model("icon_d2")
         if picked:
             wd_arr, ws_arr, src = picked[0], picked[1], "ICON-D2"
         else:
-            picked = pick("meteofrance_arome_france_hd")
+            picked = pick_model("meteofrance_arome_france_hd")
             if picked:
                 wd_arr, ws_arr, src = picked[0], picked[1], "AROME"
             else:
@@ -268,15 +271,23 @@ def get_wind_v27_final(lat, lon, alt_ft, time_dt, manual_wind=None, wx_refresh: 
                 ws_arr = h.get(f"wind_speed_{lv}hPa_gfs_seamless", [])
                 src = "GFS"
 
+        if not wd_arr or not ws_arr:
+            return 0.0, 0.0, "Err"
+
         t_target = time_dt.timestamp()
-        best_i, best_d = 0, float("inf")
+
+        # Recherche d'index optimisée: on parcourt une seule fois la série horaire
+        best_i = 0
+        best_d = float("inf")
         for i, t in enumerate(times):
             ts = dt.datetime.fromisoformat(t).replace(tzinfo=dt.timezone.utc).timestamp()
             d = abs(ts - t_target)
             if d < best_d:
-                best_d, best_i = d, i
+                best_d = d
+                best_i = i
 
         return float(wd_arr[best_i]), float(ws_arr[best_i]), src
+
     except Exception:
         return 0.0, 0.0, "Err"
 
