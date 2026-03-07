@@ -453,7 +453,7 @@ with col_ctrl:
     dist_in = st.number_input("Distance (NM)", 0.1, 300.0, 15.0, step=0.1)
     alt_in = st.number_input("Alt Croisière (ft)", 1000, 12500, 2500, step=500)
 
-    st.session_state.map_style = st.selectbox(
+    st.selectbox(
         "Fond de carte",
         MAP_STYLES,
         key="map_style",
