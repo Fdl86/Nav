@@ -488,7 +488,7 @@ with col_map:
         key="map_style"
     )   
     if st.session_state.waypoints:
-        selected_style = st.session_state.map_style
+        selected_style = style
         m = folium.Map(
             location=[st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"]],
             zoom_start=9,
