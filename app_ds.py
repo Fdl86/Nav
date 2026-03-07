@@ -20,7 +20,7 @@ NOAA_DECL_URL = "https://www.ngdc.noaa.gov/geomag-web/calculators/calculateDecli
 PRESSURE_MAP = {1000: 975, 1500: 960, 2000: 950, 2500: 925, 3000: 900, 5000: 850, 7000: 750}
 HTTP_TIMEOUT = 8
 ARRIVAL_METAR_RADIUS_NM = 15.0
-OPENAIP_API_KEY = os.getenv("OPENAIP_API_KEY", "")
+OPENAIP_API_KEY = get_openaip_key()
 
 # ─── PAGE ───
 APP_VERSION = "59.1-openAIP"
@@ -81,6 +81,12 @@ def get_http_session():
 
 SESSION = get_http_session()
 
+def get_openaip_key():
+    key = os.getenv("OPENAIP_API_KEY")
+    if not key:
+        raise RuntimeError("OPENAIP_API_KEY manquante")
+    return key
+    
 # ─── STATE ───
 if "waypoints" not in st.session_state:
     st.session_state.waypoints = []
