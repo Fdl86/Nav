@@ -490,14 +490,14 @@ with col_ctrl:
 
 with col_map:
     if st.session_state.waypoints:
+        selected_style = st.session_state["map_style"]
+
         m = folium.Map(
             location=[st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"]],
             zoom_start=9,
             control_scale=True,
             tiles=None,
         )
-
-        selected_style = st.session_state.map_style
 
         if selected_style == "Carte aviation (openAIP)" and OPENAIP_API_KEY:
             folium.TileLayer(
@@ -553,7 +553,7 @@ with col_map:
             key="map_main",
             returned_objects=[],
         )
-
+        
 # ─── LOG + PROFIL ───
 if len(st.session_state.waypoints) > 1:
     st.markdown("---")
