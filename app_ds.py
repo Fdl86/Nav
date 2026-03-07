@@ -1,3 +1,4 @@
+import os
 import streamlit as st
 import requests
 import pandas as pd
@@ -11,19 +12,19 @@ import re
 import numpy as np
 from bisect import bisect_left
 from concurrent.futures import ThreadPoolExecutor
-import os
 
 # ─── CONFIGURATION ───
-OPENAIP_API_KEY = os.getenv("OPENAIP_API_KEY", "")
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
 ELEVATION_URL = "https://api.open-meteo.com/v1/elevation"
 NOAA_DECL_URL = "https://www.ngdc.noaa.gov/geomag-web/calculators/calculateDeclination"
 PRESSURE_MAP = {1000: 975, 1500: 960, 2000: 950, 2500: 925, 3000: 900, 5000: 850, 7000: 750}
 HTTP_TIMEOUT = 8
 ARRIVAL_METAR_RADIUS_NM = 15.0
+OPENAIP_API_KEY = os.getenv("OPENAIP_API_KEY", "")
+MAP_STYLES = ["Carte Standard", "Carte aviation (openAIP)", "Satellite"]
 
 # ─── PAGE ───
-st.set_page_config(page_title="SkyAssistant V58", layout="wide")
+st.set_page_config(page_title="SkyAssistant V58.1", layout="wide")
 
 # ─── UI / UX V58 ───
 st.markdown(
@@ -75,7 +76,7 @@ div[data-testid="stDataEditor"] [data-testid="stElementToolbar"] {
 @st.cache_resource
 def get_http_session():
     s = requests.Session()
-    s.headers.update({"User-Agent": "SkyAssistant/58"})
+    s.headers.update({"User-Agent": "SkyAssistant/58.1"})
     return s
 
 SESSION = get_http_session()
@@ -85,6 +86,8 @@ if "waypoints" not in st.session_state:
     st.session_state.waypoints = []
 if "wx_refresh" not in st.session_state:
     st.session_state.wx_refresh = 0
+if "map_style" not in st.session_state:
+    st.session_state.map_style = "Carte Standard"
 
 # ─── AIRPORTS ───
 @st.cache_data(ttl=86400)
@@ -369,7 +372,7 @@ def create_pdf(df_nav, metar_text):
 
 # ─── SIDEBAR ───
 with st.sidebar:
-    st.title("✈️ SkyAssistant V58")
+    st.title("✈️ SkyAssistant V58.1")
     if st.button("🔄 Rafraîchir météo", use_container_width=True):
         st.session_state.wx_refresh += 1
         st.rerun()
@@ -443,20 +446,17 @@ if st.session_state.waypoints:
 col_map, col_ctrl = st.columns([2, 1])
 
 with col_ctrl:
-    if "map_style" not in st.session_state:
-        st.session_state.map_style = "Carte Standard"
-
-    st.session_state.map_style = st.selectbox(
-        "Fond de carte",
-        ["Carte Standard", "Carte aviation (openAIP)", "Satellite"],
-        index=["Carte Standard", "Carte aviation (openAIP)", "Satellite"].index(st.session_state.map_style),
-    )
-    
     st.markdown('<div class="sa-section"><h3 style="margin-bottom:0.2rem;">📍 Ajouter Segment</h3></div>', unsafe_allow_html=True)
     rv_in = st.number_input("Route Vraie (Rv) °", 0, 359, 0, step=1)
     st.caption(f"Route affichée : {fmt_hdg3(rv_in)}°")
     dist_in = st.number_input("Distance (NM)", 0.1, 300.0, 15.0, step=0.1)
     alt_in = st.number_input("Alt Croisière (ft)", 1000, 12500, 2500, step=500)
+    st.session_state.map_style = st.selectbox(
+        "Fond de carte",
+        MAP_STYLES,
+        index=MAP_STYLES.index(st.session_state.map_style),
+        key="map_style_select",
+    )
     use_auto = st.toggle("Vent Auto", True)
     m_wind = None
     if not use_auto:
@@ -488,84 +488,60 @@ with col_ctrl:
 
 with col_map:
     if st.session_state.waypoints:
-
         m = folium.Map(
-            location=[
-                st.session_state.waypoints[0]["lat"],
-                st.session_state.waypoints[0]["lon"],
-            ],
+            location=[st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"]],
             zoom_start=9,
             control_scale=True,
             tiles=None,
         )
 
-        # On ajoute d'abord la couche choisie pour qu'elle reste celle affichée après rerun
-        if st.session_state.map_style == "Carte Standard":
+        def add_osm(layer_name="Carte Standard"):
             folium.TileLayer(
                 "openstreetmap",
-                name="Carte Standard",
+                name=layer_name,
                 overlay=False,
                 control=True,
+                show=True,
             ).add_to(m)
 
-        elif st.session_state.map_style == "Carte aviation (openAIP)":
+        def add_sat(layer_name="Satellite"):
+            folium.TileLayer(
+                tiles="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
+                attr="Google Satellite",
+                name=layer_name,
+                overlay=False,
+                control=True,
+                show=True,
+            ).add_to(m)
+
+        def add_openaip(layer_name="Carte aviation (openAIP)"):
             if OPENAIP_API_KEY:
                 folium.TileLayer(
                     tiles=f"https://api.tiles.openaip.net/api/data/openaip/{{z}}/{{x}}/{{y}}.png?apiKey={OPENAIP_API_KEY}",
                     attr="openAIP",
-                    name="Carte aviation (openAIP)",
+                    name=layer_name,
                     overlay=False,
                     control=True,
+                    show=True,
                 ).add_to(m)
             else:
-                folium.TileLayer(
-                    "openstreetmap",
-                    name="Carte Standard",
-                    overlay=False,
-                    control=True,
-                ).add_to(m)
+                add_osm(layer_name)
 
+        # La couche choisie est ajoutée en premier pour rester la couche active après rerun.
+        if st.session_state.map_style == "Carte aviation (openAIP)":
+            add_openaip()
+            add_osm()
+            add_sat()
         elif st.session_state.map_style == "Satellite":
-            folium.TileLayer(
-                tiles="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
-                attr="Google Satellite",
-                name="Satellite",
-                overlay=False,
-                control=True,
-            ).add_to(m)
+            add_sat()
+            add_osm()
+            add_openaip()
+        else:
+            add_osm()
+            add_openaip()
+            add_sat()
 
-        # On ajoute aussi les autres couches pour pouvoir changer si besoin
-        if st.session_state.map_style != "Carte Standard":
-            folium.TileLayer(
-                "openstreetmap",
-                name="Carte Standard",
-                overlay=False,
-                control=True,
-            ).add_to(m)
-
-        if st.session_state.map_style != "Carte aviation (openAIP)" and OPENAIP_API_KEY:
-            folium.TileLayer(
-                tiles=f"https://api.tiles.openaip.net/api/data/openaip/{{z}}/{{x}}/{{y}}.png?apiKey={OPENAIP_API_KEY}",
-                attr="openAIP",
-                name="Carte aviation (openAIP)",
-                overlay=False,
-                control=True,
-            ).add_to(m)
-
-        if st.session_state.map_style != "Satellite":
-            folium.TileLayer(
-                tiles="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
-                attr="Google Satellite",
-                name="Satellite",
-                overlay=False,
-                control=True,
-            ).add_to(m)
-
-        folium.PolyLine(
-            [[w["lat"], w["lon"]] for w in st.session_state.waypoints],
-            color="red",
-            weight=3,
-        ).add_to(m)
+        folium.PolyLine([[w["lat"], w["lon"]] for w in st.session_state.waypoints], color="red", weight=3).add_to(m)
 
         num_w = len(st.session_state.waypoints)
         for i, w in enumerate(st.session_state.waypoints):
@@ -575,22 +551,10 @@ with col_map:
                 icon_c, icon_t = "red", "flag"
             else:
                 icon_c, icon_t = "orange", "circle"
-
-            folium.Marker(
-                [w["lat"], w["lon"]],
-                popup=w["name"],
-                icon=folium.Icon(color=icon_c, icon=icon_t, prefix="fa"),
-            ).add_to(m)
+            folium.Marker([w["lat"], w["lon"]], popup=f"{w['name']}", icon=folium.Icon(color=icon_c, icon=icon_t, prefix="fa")).add_to(m)
 
         folium.LayerControl().add_to(m)
-
-        st_folium(
-            m,
-            width="100%",
-            height=380,
-            key="map_v58",
-            returned_objects=[],
-        )
+        st_folium(m, width="100%", height=380, key="map_v58_1", returned_objects=[])
 
 # ─── LOG + PROFIL ───
 if len(st.session_state.waypoints) > 1:
@@ -813,11 +777,4 @@ if len(st.session_state.waypoints) > 1:
         showlegend=False,
     )
     st.markdown('<div class="sa-section"><h3 style="margin-bottom:0.4rem;">📈 Profil vertical</h3></div>', unsafe_allow_html=True)
-
-    st.plotly_chart(
-        fig,
-        use_container_width=False,
-        config={"staticPlot": True, "displayModeBar": False},
-    )
-    
-    st.markdown("</div>", unsafe_allow_html=True)
+    st.plotly_chart(fig, use_container_width=False, config={"staticPlot": True, "displayModeBar": False})
