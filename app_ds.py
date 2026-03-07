@@ -407,22 +407,27 @@ def get_wind_v27_final(lat, lon, alt_ft, time_dt, manual_wind=None, wx_refresh: 
 def create_pdf(df_nav, metar_text):
     pdf = FPDF(orientation="P", unit="mm", format="A4")
     pdf.add_page()
+
     pdf.set_font("helvetica", "B", 14)
     pdf.cell(0, 10, "LOG DE NAVIGATION - SKYASSISTANT", new_x="LMARGIN", new_y="NEXT", align="C")
     pdf.ln(5)
+
     pdf.set_font("helvetica", "B", 10)
     pdf.cell(0, 8, "METAR DE DEPART :", new_x="LMARGIN", new_y="NEXT")
     pdf.set_font("helvetica", size=9)
     pdf.multi_cell(0, 6, _pdf_safe(metar_text), border=1)
     pdf.ln(5)
+
+    # ─── TABLEAU PRINCIPAL ───
     w = [30, 35, 15, 20, 15, 45, 30]
     cols = ["Branche", "Vent", "GS", "EET", "Fuel", "TOC/TOD", "Arrivée"]
+
     pdf.set_font("helvetica", "B", 8)
     pdf.set_fill_color(220, 220, 220)
-    # OPTIMISÉ : zip() évite l'indexation manuelle répétée
     for col, width in zip(cols, w):
         pdf.cell(width, 8, col, border=1, fill=True, align="C")
     pdf.ln()
+
     pdf.set_font("helvetica", size=8)
     for row in df_nav.itertuples(index=False):
         pdf.cell(w[0], 8, _pdf_safe(getattr(row, "Branche", "")).replace("➔", "->"), border=1)
@@ -433,6 +438,33 @@ def create_pdf(df_nav, metar_text):
         pdf.cell(w[5], 8, _pdf_safe(getattr(row, "TOC/TOD", "")), border=1)
         pdf.cell(w[6], 8, _pdf_safe(getattr(row, "Arrivée", "")), border=1)
         pdf.ln()
+
+    pdf.ln(5)
+
+    # ─── CALCULS NAV PAR BRANCHE ───
+    pdf.set_font("helvetica", "B", 10)
+    pdf.cell(0, 8, "CALCULS DE NAVIGATION :", new_x="LMARGIN", new_y="NEXT")
+
+    w2 = [38, 12, 14, 12, 12, 12, 12]
+    cols2 = ["Branche", "FB", "Xmax", "X", "CV", "CM", "CC"]
+
+    pdf.set_font("helvetica", "B", 8)
+    pdf.set_fill_color(220, 220, 220)
+    for col, width in zip(cols2, w2):
+        pdf.cell(width, 8, col, border=1, fill=True, align="C")
+    pdf.ln()
+
+    pdf.set_font("helvetica", size=8)
+    for row in df_nav.itertuples(index=False):
+        pdf.cell(w2[0], 8, _pdf_safe(getattr(row, "Branche", "")).replace("➔", "->"), border=1)
+        pdf.cell(w2[1], 8, _pdf_safe(getattr(row, "FB", "")), border=1, align="C")
+        pdf.cell(w2[2], 8, _pdf_safe(getattr(row, "Xmax", "")), border=1, align="C")
+        pdf.cell(w2[3], 8, _pdf_safe(getattr(row, "X", "")), border=1, align="C")
+        pdf.cell(w2[4], 8, _pdf_safe(getattr(row, "CV", "")), border=1, align="C")
+        pdf.cell(w2[5], 8, _pdf_safe(getattr(row, "CM", "")), border=1, align="C")
+        pdf.cell(w2[6], 8, _pdf_safe(getattr(row, "CC", "")), border=1, align="C")
+        pdf.ln()
+
     out = pdf.output(dest="S")
     if isinstance(out, (bytes, bytearray)):
         return bytes(out)
@@ -725,6 +757,15 @@ if len(st.session_state.waypoints) > 1:
 
             drift_txt = f"{wca:+.0f}°"
             cap_txt = f"{fmt_hdg3(cap_mag)} ({drift_txt})"
+            facteur_base = 60.0 / max(1e-9, float(tas))
+            xmax = facteur_base * ws
+            x = xmax * math.sin(wa)            
+            fb_i = int(round(facteur_base))
+            xmax_i = int(round(xmax))
+            x_i = int(round(x))
+            cv_i = int(round(cap_vrai)) % 360
+            cm_i = int(round(cap_mag)) % 360
+            cc_i = cm_i
             nav_data.append({
                 "Branche": f"{w1['name']}➔{w2['name']}",
                 "Vent": f"{int(wd)}/{int(ws)}kt ({src})",
@@ -737,6 +778,12 @@ if len(st.session_state.waypoints) > 1:
                 "_idx": i,
                 "ETA": eta_dt.strftime("%H:%M"),
                 "Cap": cap_txt,
+                "FB": str(fb_i),
+                "Xmax": str(xmax_i),
+                "X": str(x_i),
+                "CV": f"{cv_i:03d}",
+                "CM": f"{cm_i:03d}",
+                "CC": f"{cc_i:03d}",
             })
 
     df_nav = pd.DataFrame(nav_data)
@@ -787,7 +834,23 @@ if len(st.session_state.waypoints) > 1:
         st.session_state.waypoints = new_wps
         st.rerun()
 
-    df_pdf = df_nav[["Branche", "Vent", "GS", "EET", "Fuel", "TOC/TOD", "Arrivée"]].copy()
+    df_pdf = df_nav[
+        [
+            "Branche",
+            "Vent",
+            "GS",
+            "EET",
+            "Fuel",
+            "TOC/TOD",
+            "Arrivée",
+            "FB",
+            "Xmax",
+            "X",
+            "CV",
+            "CM",
+            "CC",
+        ]
+    ].copy()
     st.download_button(label="📥 Log PDF", data=create_pdf(df_pdf, metar_val), file_name="nav_log.pdf", use_container_width=True)
 
     fig.add_trace(go.Scatter(x=dist_p, y=terr_p, fill="tozeroy", name="Relief", line_color="sienna"))
