@@ -37,11 +37,6 @@ div[data-testid="stDataEditor"] [data-testid="stElementToolbar"] {
     display: none !important;
 }
 
-.block-container {
-    padding-top: 1.1rem;
-    padding-bottom: 1.5rem;
-}
-
 .sa-card {
     border: 1px solid rgba(255,255,255,0.08);
     border-radius: 14px;
