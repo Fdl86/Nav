@@ -481,12 +481,12 @@ with col_ctrl:
 
 with col_map:
     st.markdown("Fond de carte")
-        style = st.radio(
-            "",
-            ["Carte aviation (openAIP)", "Carte Standard", "Satellite"],
-            horizontal=True,
-            key="map_style"
-        )   
+    style = st.radio(
+        "",
+        ["Carte aviation (openAIP)", "Carte Standard", "Satellite"],
+        horizontal=True,
+        key="map_style"
+    )   
     if st.session_state.waypoints:
         selected_style = st.session_state.map_style
         m = folium.Map(
