@@ -108,7 +108,6 @@ def load_airports():
         fr = df[(df["iso_country"] == "FR") & (df["type"].isin(["large_airport", "medium_airport", "small_airport"]))]
         fr = fr[fr["ident"].astype(str).str.match(r"^LF[A-Z0-9]{2}$")]
 
-        # OPTIMISÉ : itertuples() est nettement plus rapide que iterrows()
         downloaded = {
             row.ident: {"name": row.name, "lat": float(row.latitude_deg), "lon": float(row.longitude_deg)}
             for row in fr.itertuples(index=False)
@@ -167,7 +166,6 @@ def nearest_airfields(lat, lon, radius_nm=15.0, k=5, exclude_icao=None):
     if exclude_icao and is_lf_icao(exclude_icao):
         df = df[df["icao"] != exclude_icao]
 
-    # OPTIMISÉ : calcul haversine vectorisé NumPy
     lat1 = np.radians(lat)
     lon1 = np.radians(lon)
     lat2 = np.radians(df["lat"].to_numpy(dtype=float))
@@ -190,7 +188,7 @@ def format_hhmm_from_seconds(total_seconds: float) -> str:
 
 def build_map(waypoints, map_style, center=None, zoom=None):
     if waypoints:
-        default_center = [waypoints[0]["lat"], waypoints[0]["lon"]]
+        default_center = [waypoints[-1]["lat"], waypoints[-1]["lon"]]
     else:
         default_center = [46.5877, 0.3069]
 
@@ -386,8 +384,6 @@ def get_wind_v27_final(lat, lon, alt_ft, time_dt, manual_wind=None, wx_refresh: 
             return 0.0, 0.0, "Err"
 
         t_target = time_dt.timestamp()
-
-        # OPTIMISÉ : recherche temporelle en O(log n) via bisect sur timestamps pré-convertis
         timestamps = [dt.datetime.fromisoformat(t).replace(tzinfo=dt.timezone.utc).timestamp() for t in times]
         pos = bisect_left(timestamps, t_target)
         if pos <= 0:
@@ -418,7 +414,7 @@ def create_pdf(df_nav, metar_text):
     pdf.multi_cell(0, 6, _pdf_safe(metar_text), border=1)
     pdf.ln(5)
 
-    # ─── TABLEAU PRINCIPAL ───
+    # Tableau principal
     w = [30, 35, 15, 20, 15, 45, 30]
     cols = ["Branche", "Vent", "GS", "EET", "Fuel", "TOC/TOD", "Arrivée"]
 
@@ -441,19 +437,19 @@ def create_pdf(df_nav, metar_text):
 
     pdf.ln(5)
 
-    # ─── CALCULS NAV PAR BRANCHE ───
+    # Calculs de navigation
     pdf.set_font("helvetica", "B", 10)
     pdf.cell(0, 8, "CALCULS DE NAVIGATION :", new_x="LMARGIN", new_y="NEXT")
-    
+
     w2 = [34, 14, 12, 14, 12, 14, 22, 14]
     cols2 = ["Branche", "Rv", "d", "Cv", "dm", "Cm", "Deviation", "Cc"]
-    
+
     pdf.set_font("helvetica", "B", 8)
     pdf.set_fill_color(220, 220, 220)
     for col, width in zip(cols2, w2):
         pdf.cell(width, 8, col, border=1, fill=True, align="C")
     pdf.ln()
-    
+
     pdf.set_font("helvetica", size=8)
     for row in df_nav.itertuples(index=False):
         pdf.cell(w2[0], 8, _pdf_safe(getattr(row, "Branche", "")).replace("➔", "->"), border=1)
@@ -578,7 +574,7 @@ with col_ctrl:
         la2 = math.degrees(la1 + (dist_in / R) * math.cos(brng))
         lo2 = math.degrees(lo1 + (dist_in / R) * math.sin(brng) / max(1e-9, math.cos(la1)))
         elev2 = get_elevation_ft(la2, lo2)
-    
+
         st.session_state.waypoints.append({
             "name": f"WP{len(st.session_state.waypoints)}",
             "lat": la2,
@@ -590,29 +586,29 @@ with col_ctrl:
             "elev": elev2,
             "arr_type": "Direct",
         })
-    
-        # centre sur la destination de la dernière branche
+
         st.session_state.map_center = [la2, lo2]
-    
         st.rerun()
 
 with col_map:
     if st.session_state.waypoints:
         if st.session_state.map_style == "openAIP" and not OPENAIP_API_KEY:
             st.warning("OPENAIP_API_KEY manquante : openAIP indisponible. Bascule sur Satellite ou configure la clé.")
+
         m = build_map(
             st.session_state.waypoints,
             st.session_state.map_style,
             center=st.session_state.map_center,
             zoom=st.session_state.map_zoom,
         )
-    st_folium(
-        m,
-        width="100%",
-        height=380,
-        key="map_v59_stateful",
-        returned_objects=[]
-    )
+
+        st_folium(
+            m,
+            height=380,
+            key="map_v59_stateful",
+            returned_objects=[],
+        )
+
 # ─── LOG + PROFIL ───
 if len(st.session_state.waypoints) > 1:
     st.markdown("---")
@@ -656,7 +652,6 @@ if len(st.session_state.waypoints) > 1:
             future_wind = None
             future_decl = None
 
-            # OPTIMISÉ : un seul pool partagé limite l'overhead de création d'executors
             if elev2 <= 0:
                 future_elev = executor.submit(get_elevation_ft, w2["lat"], w2["lon"])
             if manual:
@@ -739,7 +734,14 @@ if len(st.session_state.waypoints) > 1:
                         fig.add_annotation(x=x_tod, y=alt_ft, text=f"TOD {round(d_desc,1)}NM ({t_de_str})", showarrow=True, ay=-45)
 
                 label_dest = "VT" if "VT" in at else "TDP"
-                fig.add_annotation(x=d_total + dist_nm, y=alt_t, text=f"<b>{label_dest} {w2['name']}</b>", showarrow=False, yshift=15, font=dict(color="orange", size=11))
+                fig.add_annotation(
+                    x=d_total + dist_nm,
+                    y=alt_t,
+                    text=f"<b>{label_dest} {w2['name']}</b>",
+                    showarrow=False,
+                    yshift=15,
+                    font=dict(color="orange", size=11),
+                )
                 d_total += dist_nm
                 dist_p.append(d_total)
                 alt_p.append(alt_t)
@@ -756,31 +758,35 @@ if len(st.session_state.waypoints) > 1:
                 terr_p.append(elev2)
                 current_alt = alt_ft
 
-        rv_i = int(round(rv)) % 360
-        d_i = int(round(wca))
-        cv_i = int(round(cap_vrai)) % 360
-        dm_i = int(round(decl))
-        cm_i = int(round(cap_mag)) % 360
-        
-        nav_data.append({
-            "Branche": f"{w1['name']}➔{w2['name']}",
-            "Vent": f"{int(wd)}/{int(ws)}kt ({src})",
-            "GS": f"{int(gs)}kt",
-            "EET": f"{int(seg_sec//60):02d}:{int(seg_sec%60):02d}",
-            "Fuel": f"{fuel_branch:.1f}L",
-            "TOC/TOD": tt_str.strip(),
-            "Arrivée": at,
-            "❌": False,
-            "_idx": i,
-            "ETA": eta_dt.strftime("%H:%M"),
-            "Rv": f"{rv_i:03d}",
-            "d": f"{d_i:+d}",
-            "Cv": f"{cv_i:03d}",
-            "dm": f"{dm_i:+d}",
-            "Cm": f"{cm_i:03d}",
-            "Déviation": "",
-            "Cc": "",
-        })
+            drift_txt = f"{wca:+.0f}°"
+            cap_txt = f"{fmt_hdg3(cap_mag)} ({drift_txt})"
+
+            rv_i = int(round(rv)) % 360
+            d_i = int(round(wca))
+            cv_i = int(round(cap_vrai)) % 360
+            dm_i = int(round(decl))
+            cm_i = int(round(cap_mag)) % 360
+
+            nav_data.append({
+                "Branche": f"{w1['name']}➔{w2['name']}",
+                "Vent": f"{int(wd)}/{int(ws)}kt ({src})",
+                "GS": f"{int(gs)}kt",
+                "EET": f"{int(seg_sec//60):02d}:{int(seg_sec%60):02d}",
+                "Fuel": f"{fuel_branch:.1f}L",
+                "TOC/TOD": tt_str.strip(),
+                "Arrivée": at,
+                "❌": False,
+                "_idx": i,
+                "ETA": eta_dt.strftime("%H:%M"),
+                "Cap": cap_txt,
+                "Rv": f"{rv_i:03d}",
+                "d": f"{d_i:+d}",
+                "Cv": f"{cv_i:03d}",
+                "dm": f"{dm_i:+d}",
+                "Cm": f"{cm_i:03d}",
+                "Déviation": "",
+                "Cc": "",
+            })
 
     df_nav = pd.DataFrame(nav_data)
 
@@ -848,7 +854,13 @@ if len(st.session_state.waypoints) > 1:
             "Cc",
         ]
     ].copy()
-    st.download_button(label="📥 Log PDF", data=create_pdf(df_pdf, metar_val), file_name="nav_log.pdf", use_container_width=True)
+
+    st.download_button(
+        label="📥 Log PDF",
+        data=create_pdf(df_pdf, metar_val),
+        file_name="nav_log.pdf",
+        use_container_width=True,
+    )
 
     fig.add_trace(go.Scatter(x=dist_p, y=terr_p, fill="tozeroy", name="Relief", line_color="sienna"))
     fig.add_trace(go.Scatter(x=dist_p, y=alt_p, name="Profil Avion", line=dict(color="royalblue", width=4)))
