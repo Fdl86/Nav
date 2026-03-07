@@ -38,7 +38,7 @@ div[data-testid="stDataEditor"] [data-testid="stElementToolbar"] {
 
 # ─── HTTP SESSION ───
 @st.cache_resource
-def get_http_session() -> requests.Session:
+def get_http_session():
     s = requests.Session()
     s.headers.update({"User-Agent": "SkyAssistant/57.1"})
     return s
