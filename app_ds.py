@@ -437,7 +437,7 @@ if st.session_state.waypoints:
     arr_candidate = get_arrival_metar_candidate(st.session_state.waypoints, dep_icao)
 
     with weather_placeholder.container():
-        st.subheader("🌦️ Météo")
+        st.markdown('<div class="sa-title">🌦️ Météo</div>', unsafe_allow_html=True)
         st.markdown('<div class="sa-divider"></div>', unsafe_allow_html=True)
         col_wx1, col_wx2 = st.columns(2)
         with col_wx1:
