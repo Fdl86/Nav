@@ -561,21 +561,25 @@ with col_ctrl:
 
 with col_map:
     if st.session_state.waypoints:
-        if st.session_state.map_style == "openAIP" and not OPENAIP_API_KEY:
-            st.warning("OPENAIP_API_KEY manquante : openAIP indisponible. Bascule sur Satellite ou configure la clé.")
+            center = st.session_state.map_center
+            zoom = st.session_state.map_zoom
+        else:
+            center = [46.5, 2.5]
+            zoom = 6
+    
         m = build_map(
             st.session_state.waypoints,
             st.session_state.map_style,
-            center=st.session_state.map_center,
-            zoom=st.session_state.map_zoom,
+            center=center,
+            zoom=zoom,
         )
-    st_folium(
-        m,
-        width="100%",
-        height=380,
-        key="map_v59_stateful",
-        returned_objects=[]
-    )
+    
+        st_folium(
+            m,
+            height=380,
+            key="map_v59_stateful",
+            returned_objects=[]
+        )
 
 # ─── LOG + PROFIL ───
 if len(st.session_state.waypoints) > 1:
