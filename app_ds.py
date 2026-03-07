@@ -44,7 +44,6 @@ st.markdown(
     margin-bottom: 0.6rem;
     border-bottom: 1px solid rgba(255,255,255,0.08);
 }
-</style>
 div[data-testid="stDataFrame"] [data-testid="stElementToolbar"],
 div[data-testid="stDataEditor"] [data-testid="stElementToolbar"] {
     display: none !important;
