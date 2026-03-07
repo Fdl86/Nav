@@ -500,7 +500,7 @@ with col_map:
         # ─── OPENAIP (complément aviation) ───
         if OPENAIP_API_KEY:
             folium.TileLayer(
-                tiles=f"https://api.tiles.openaip.net/api/data/openaip/{z}/{x}/{y}.png?apiKey={OPENAIP_API_KEY}",
+                tiles=f"https://api.tiles.openaip.net/api/data/openaip/{{z}}/{{x}}/{{y}}.png?apiKey={OPENAIP_API_KEY}",
                 attr='openAIP',
                 name="Carte aviation (openAIP)",
                 overlay=False,
