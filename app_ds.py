@@ -444,6 +444,7 @@ col_map, col_ctrl = st.columns([2, 1])
 with col_ctrl:
     st.subheader("📍 Ajouter Segment")
     rv_in = st.number_input("Route Vraie (Rv) °", 0, 359, 0, step=1)
+    st.caption(f"Route affichée : {fmt_hdg3(rv_in)}°")
     dist_in = st.number_input("Distance (NM)", 0.1, 300.0, 15.0, step=0.1)
     alt_in = st.number_input("Alt Croisière (ft)", 1000, 12500, 2500, step=500)
     use_auto = st.toggle("Vent Auto", True)
@@ -640,7 +641,7 @@ if len(st.session_state.waypoints) > 1:
             current_alt = alt_ft
 
         drift_txt = f"{wca:+.0f}°"
-        cap_txt = f"{fmt_hdg3(cap_mag)} ({drift_txt})"
+        cap_txt = f"{fmt_deg(cap_mag)} ({drift_txt})"
         nav_data.append({
             "Branche": f"{w1['name']}➔{w2['name']}",
             "Vent": f"{int(wd)}/{int(ws)}kt ({src})",
