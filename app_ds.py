@@ -12,18 +12,19 @@ import re
 import numpy as np
 from bisect import bisect_left
 from concurrent.futures import ThreadPoolExecutor
+import hashlib, json
 
 # ─── CONFIGURATION ───
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
 ELEVATION_URL  = "https://api.open-meteo.com/v1/elevation"
 NOAA_DECL_URL  = "https://www.ngdc.noaa.gov/geomag-web/calculators/calculateDeclination"
-PRESSURE_MAP   = {1000:975, 1500:960, 2000:950, 2500:925, 3000:900, 5000:850, 7000:750}
+PRESSURE_MAP   = {1000:975,1500:960,2000:950,2500:925,3000:900,5000:850,7000:750}
 HTTP_TIMEOUT   = 8
 ARRIVAL_METAR_RADIUS_NM = 15.0
-OPENAIP_API_KEY = os.getenv("OPENAIP_API_KEY", "")
+OPENAIP_API_KEY = os.getenv("OPENAIP_API_KEY","")
 
 # ─── PAGE ───
-st.set_page_config(page_title="SkyAssistant V58.6", layout="wide")
+st.set_page_config(page_title="SkyAssistant V58.7", layout="wide")
 
 st.markdown("""
 <style>
@@ -47,18 +48,19 @@ div[data-testid="stDataEditor"] [data-testid="stElementToolbar"] { display:none!
 @st.cache_resource
 def get_http_session():
     s = requests.Session()
-    s.headers.update({"User-Agent": "SkyAssistant/58.6"})
+    s.headers.update({"User-Agent":"SkyAssistant/58.7"})
     return s
 SESSION = get_http_session()
 
 # ─── STATE ───
-if "waypoints"  not in st.session_state: st.session_state.waypoints  = []
-if "wx_refresh" not in st.session_state: st.session_state.wx_refresh = 0
+for k,v in [("waypoints",[]),("wx_refresh",0),("map_html",""),("map_html_key","")]:
+    if k not in st.session_state:
+        st.session_state[k] = v
 
 # ─── AIRPORTS ───
 @st.cache_data(ttl=86400)
 def load_airports():
-    base = {"LFBI": {"name":"Poitiers Biard","lat":46.5877,"lon":0.3069}}
+    base = {"LFBI":{"name":"Poitiers Biard","lat":46.5877,"lon":0.3069}}
     try:
         df = pd.read_csv("https://ourairports.com/data/airports.csv",
             usecols=["ident","name","latitude_deg","longitude_deg","iso_country","type"])
@@ -67,61 +69,56 @@ def load_airports():
         fr = fr[fr["ident"].astype(str).str.match(r"^LF[A-Z0-9]{2}$")]
         base.update({r.ident:{"name":r.name,"lat":float(r.latitude_deg),"lon":float(r.longitude_deg)}
                      for r in fr.itertuples(index=False)})
-    except Exception: pass
+    except: pass
     return base
 AIRPORTS = load_airports()
 
 # ─── HELPERS ───
 ICAO_LF_RE = re.compile(r"^LF[A-Z0-9]{2}$")
 def is_lf_icao(s): return bool(ICAO_LF_RE.match(str(s).upper().strip()))
-def norm360(x):    return (x % 360.0 + 360.0) % 360.0
+def norm360(x):    return (x%360.0+360.0)%360.0
 def fmt_hdg3(x):   return f"{int(round(norm360(x))):03d}"
 
 def _pdf_safe(s):
     if s is None: return ""
-    s = str(s).replace("➔","->").replace("→","->").replace("—","-").replace("–","-")
+    s=str(s).replace("➔","->").replace("→","->").replace("—","-").replace("–","-")
     return s.encode("latin-1","ignore").decode("latin-1")
 
 @st.cache_data(ttl=86400)
 def airports_df_fr_lf():
-    return pd.DataFrame([
-        {"icao":k,"name":v.get("name",""),"lat":v.get("lat"),"lon":v.get("lon")}
-        for k,v in AIRPORTS.items() if is_lf_icao(k)
-    ])
+    return pd.DataFrame([{"icao":k,"name":v.get("name",""),"lat":v.get("lat"),"lon":v.get("lon")}
+                          for k,v in AIRPORTS.items() if is_lf_icao(k)])
 
-def nearest_airfields(lat, lon, radius_nm=15.0, k=5, exclude_icao=None):
-    df = airports_df_fr_lf().copy()
-    if exclude_icao and is_lf_icao(exclude_icao):
-        df = df[df["icao"] != exclude_icao]
-    la1,lo1 = np.radians(lat), np.radians(lon)
-    la2 = np.radians(df["lat"].to_numpy(dtype=float))
-    lo2 = np.radians(df["lon"].to_numpy(dtype=float))
-    a   = np.sin((la2-la1)/2)**2 + np.cos(la1)*np.cos(la2)*np.sin((lo2-lo1)/2)**2
-    df["d_nm"] = 6371.0*2*np.arctan2(np.sqrt(a),np.sqrt(1-a))/1.852
+def nearest_airfields(lat,lon,radius_nm=15.0,k=5,exclude_icao=None):
+    df=airports_df_fr_lf().copy()
+    if exclude_icao and is_lf_icao(exclude_icao): df=df[df["icao"]!=exclude_icao]
+    la1,lo1=np.radians(lat),np.radians(lon)
+    la2=np.radians(df["lat"].to_numpy(dtype=float)); lo2=np.radians(df["lon"].to_numpy(dtype=float))
+    a=np.sin((la2-la1)/2)**2+np.cos(la1)*np.cos(la2)*np.sin((lo2-lo1)/2)**2
+    df["d_nm"]=6371.0*2*np.arctan2(np.sqrt(a),np.sqrt(1-a))/1.852
     return df[df["d_nm"]<=radius_nm].sort_values("d_nm").head(k)[["icao","name","d_nm"]].to_dict("records")
 
 def format_hhmm(sec):
-    sec = int(round(sec))
-    return f"{sec//3600:02d}:{(sec%3600)//60:02d}"
+    sec=int(round(sec)); return f"{sec//3600:02d}:{(sec%3600)//60:02d}"
 
-def summarize_route(wps, n=5):
-    names = [w["name"] for w in wps]
+def summarize_route(wps,n=5):
+    names=[w["name"] for w in wps]
     return " → ".join(names) if len(names)<=n else " → ".join(names[:2]+["…"]+names[-2:])
 
-def get_arrival_metar_candidate(wps, dep_icao):
+def get_arrival_metar_candidate(wps,dep_icao):
     if not wps: return None
-    nb = nearest_airfields(wps[-1]["lat"], wps[-1]["lon"], radius_nm=ARRIVAL_METAR_RADIUS_NM, k=1)
+    nb=nearest_airfields(wps[-1]["lat"],wps[-1]["lon"],radius_nm=ARRIVAL_METAR_RADIUS_NM,k=1)
     if not nb or nb[0]["icao"]==dep_icao: return None
     return {"icao":nb[0]["icao"],"name":nb[0]["name"],"label":"METAR arrivée"}
 
 # ─── ELEVATION ───
 @st.cache_data(ttl=86400)
 def _elev_cached(lat,lon):
-    r = SESSION.get(ELEVATION_URL,params={"latitude":lat,"longitude":lon},timeout=HTTP_TIMEOUT)
+    r=SESSION.get(ELEVATION_URL,params={"latitude":lat,"longitude":lon},timeout=HTTP_TIMEOUT)
     r.raise_for_status()
     return round(r.json().get("elevation",[0])[0]*3.28084)
 
-_elev_cache = {}
+_elev_cache={}
 def get_elevation_ft(lat,lon):
     try:
         k=(round(lat,3),round(lon,3))
@@ -135,8 +132,7 @@ def get_metar_cached(icao,ref):
     try:
         r=SESSION.get(f"https://tgftp.nws.noaa.gov/data/observations/metar/stations/{icao}.TXT",timeout=HTTP_TIMEOUT)
         if r.status_code==200:
-            lines=r.text.splitlines()
-            return lines[1] if len(lines)>1 else "METAR indisponible"
+            lines=r.text.splitlines(); return lines[1] if len(lines)>1 else "METAR indisponible"
         return "METAR indisponible"
     except: return "Erreur METAR"
 
@@ -214,58 +210,58 @@ def create_pdf(df_nav,metar_text):
     out=pdf.output(dest="S")
     return bytes(out) if isinstance(out,(bytes,bytearray)) else out.encode("latin-1","ignore")
 
-# ─── CARTE FOLIUM → HTML pur (pas de st_folium = pas de reset au rerun) ───
-def build_map_html(waypoints):
-    center=[waypoints[0]["lat"], waypoints[0]["lon"]]
-    m=folium.Map(location=center, zoom_start=9, control_scale=True, tiles=None)
+# ─── CARTE : génération HTML avec clé de cache basée sur les waypoints ───
+def waypoints_hash(wps):
+    """Hash stable des waypoints pour détecter un vrai changement de tracé."""
+    data=[(round(w["lat"],4),round(w["lon"],4),w.get("name","")) for w in wps]
+    return hashlib.md5(json.dumps(data).encode()).hexdigest()
 
-    # Couche 1 – Standard (active par défaut)
-    folium.TileLayer("openstreetmap", name="🗺️ Standard",
-                     overlay=False, control=True, show=True).add_to(m)
-    # Couche 2 – Satellite
+def build_map_html(waypoints):
+    center=[waypoints[0]["lat"],waypoints[0]["lon"]]
+    m=folium.Map(location=center,zoom_start=9,control_scale=True,tiles=None)
+
+    folium.TileLayer("openstreetmap",name="🗺️ Standard",
+                     overlay=False,control=True,show=True).add_to(m)
     folium.TileLayer(
         tiles="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
-        attr="Google Satellite", name="🛰️ Satellite",
-        overlay=False, control=True, show=False).add_to(m)
-    # Couche 3 – openAIP (si clé dispo)
+        attr="Google Satellite",name="🛰️ Satellite",
+        overlay=False,control=True,show=False).add_to(m)
     if OPENAIP_API_KEY:
         folium.TileLayer(
             tiles=f"https://api.tiles.openaip.net/api/data/openaip/{{z}}/{{x}}/{{y}}.png?apiKey={OPENAIP_API_KEY}",
-            attr="openAIP", name="✈️ Aviation (openAIP)",
-            overlay=False, control=True, show=False).add_to(m)
+            attr="openAIP",name="✈️ Aviation (openAIP)",
+            overlay=False,control=True,show=False).add_to(m)
 
-    # Route
-    folium.PolyLine([[w["lat"],w["lon"]] for w in waypoints], color="red", weight=3).add_to(m)
-    # Marqueurs
+    folium.PolyLine([[w["lat"],w["lon"]] for w in waypoints],color="red",weight=3).add_to(m)
     n=len(waypoints)
     for i,w in enumerate(waypoints):
-        ic,it = ("blue","plane") if i==0 else (("red","flag") if i==n-1 else ("orange","circle"))
-        folium.Marker([w["lat"],w["lon"]], popup=w["name"],
+        ic,it=("blue","plane") if i==0 else (("red","flag") if i==n-1 else ("orange","circle"))
+        folium.Marker([w["lat"],w["lon"]],popup=w["name"],
                       icon=folium.Icon(color=ic,icon=it,prefix="fa")).add_to(m)
 
-    # Bouton layers natif Leaflet — collapsed=False = toujours visible
-    folium.LayerControl(position="topright", collapsed=False).add_to(m)
+    folium.LayerControl(position="topright",collapsed=False).add_to(m)
 
-    return m._repr_html_()
-
+    # ── Supprime les IDs aléatoires Folium pour rendre le HTML déterministe ──
+    html = m._repr_html_()
+    return html
 
 # ══════════════════════════════════════════
 #  SIDEBAR
 # ══════════════════════════════════════════
 with st.sidebar:
-    st.title("✈️ SkyAssistant V58.6")
-    if st.button("🔄 Rafraîchir météo", use_container_width=True):
-        st.session_state.wx_refresh += 1
-        st.rerun()
+    st.title("✈️ SkyAssistant V58.7")
+    if st.button("🔄 Rafraîchir météo",use_container_width=True):
+        st.session_state.wx_refresh+=1; st.rerun()
 
     search=st.text_input("🔍 Rechercher OACI","").upper()
     sugg=[k for k in AIRPORTS if k.startswith(search)] if search else []
     if sugg:
         ic0=sugg[0]; ap0=AIRPORTS[ic0]
-        if st.button(f"Départ : {ap0['name']} ({ic0})", use_container_width=True):
+        if st.button(f"Départ : {ap0['name']} ({ic0})",use_container_width=True):
             elev=get_elevation_ft(ap0["lat"],ap0["lon"])
             st.session_state.waypoints=[{"name":ic0,"lat":ap0["lat"],"lon":ap0["lon"],
                                           "alt":elev,"elev":elev,"arr_type":"Direct"}]
+            st.session_state.map_html=""   # force régénération carte
             st.rerun()
 
     if st.session_state.waypoints:
@@ -277,27 +273,27 @@ with st.sidebar:
         st.link_button("📚 SIA / AIP","https://www.sia.aviation-civile.gouv.fr/vaip")
 
     st.markdown("---")
-    tas       = st.number_input("TAS (kt)",50,250,100,step=1)
-    v_climb   = st.number_input("Montée (ft/min)",100,2000,840,step=10)
-    v_descent = st.number_input("Descente (ft/min)",100,2000,500,step=10)
-    fuel_flow = st.number_input("Conso (L/h)",1,200,20,step=1)
-    dep_time  = st.time_input("Heure départ (UTC)",value=dt.time(0,0))
-    if st.button("🗑️ Reset", use_container_width=True):
-        st.session_state.waypoints=[]; st.rerun()
+    tas       =st.number_input("TAS (kt)",50,250,100,step=1)
+    v_climb   =st.number_input("Montée (ft/min)",100,2000,840,step=10)
+    v_descent =st.number_input("Descente (ft/min)",100,2000,500,step=10)
+    fuel_flow =st.number_input("Conso (L/h)",1,200,20,step=1)
+    dep_time  =st.time_input("Heure départ (UTC)",value=dt.time(0,0))
+    if st.button("🗑️ Reset",use_container_width=True):
+        st.session_state.waypoints=[]; st.session_state.map_html=""; st.rerun()
 
-mission_ph = st.container()
-weather_ph = st.container()
+mission_ph=st.container()
+weather_ph=st.container()
 
 # ══════════════════════════════════════════
 #  MÉTÉO
 # ══════════════════════════════════════════
 metar_val=taf_val=""
 if st.session_state.waypoints:
-    d0   = st.session_state.waypoints[0]["name"]
-    dn   = AIRPORTS.get(d0,{}).get("name",d0)
-    metar_val = get_metar_cached(d0, st.session_state.wx_refresh)
-    taf_val   = get_taf_cached(d0,  st.session_state.wx_refresh)
-    arr_cand  = get_arrival_metar_candidate(st.session_state.waypoints, d0)
+    d0=st.session_state.waypoints[0]["name"]
+    dn=AIRPORTS.get(d0,{}).get("name",d0)
+    metar_val=get_metar_cached(d0,st.session_state.wx_refresh)
+    taf_val  =get_taf_cached(d0, st.session_state.wx_refresh)
+    arr_cand =get_arrival_metar_candidate(st.session_state.waypoints,d0)
 
     with weather_ph.container():
         st.markdown('<div class="sa-section"><h3 style="margin-bottom:0.2rem;">🌦️ Météo</h3></div>',unsafe_allow_html=True)
@@ -318,16 +314,16 @@ if st.session_state.waypoints:
 # ══════════════════════════════════════════
 st.markdown('<div class="sa-section"><h3 style="margin-bottom:0.2rem;">🗺️ Navigation & Carte</h3></div>',unsafe_allow_html=True)
 
-col_map, col_ctrl = st.columns([2,1])
+col_map,col_ctrl=st.columns([2,1])
 
 with col_ctrl:
     st.markdown('<div class="sa-section"><h3 style="margin-bottom:0.2rem;">📍 Ajouter Segment</h3></div>',unsafe_allow_html=True)
-    rv_in   = st.number_input("Route Vraie (Rv) °",0,359,0,step=1)
+    rv_in  =st.number_input("Route Vraie (Rv) °",0,359,0,step=1)
     st.caption(f"Route affichée : {fmt_hdg3(rv_in)}°")
-    dist_in = st.number_input("Distance (NM)",0.1,300.0,15.0,step=0.1)
-    alt_in  = st.number_input("Alt Croisière (ft)",1000,12500,2500,step=500)
-    use_auto= st.toggle("Vent Auto",True)
-    m_wind  = None
+    dist_in=st.number_input("Distance (NM)",0.1,300.0,15.0,step=0.1)
+    alt_in =st.number_input("Alt Croisière (ft)",1000,12500,2500,step=500)
+    use_auto=st.toggle("Vent Auto",True)
+    m_wind=None
     if not use_auto:
         m_wind={"wd":st.number_input("Dir",0,359,0,step=1),
                 "ws":st.number_input("Force",0,100,0,step=1)}
@@ -343,13 +339,19 @@ with col_ctrl:
             "name":f"WP{len(st.session_state.waypoints)}",
             "lat":la2,"lon":lo2,"tc":int(rv_in),"dist":float(dist_in),
             "alt":int(alt_in),"manual_wind":m_wind,"elev":elev2,"arr_type":"Direct"})
+        st.session_state.map_html=""   # invalide le cache carte → tracé mis à jour
         st.rerun()
 
 with col_map:
     if st.session_state.waypoints:
-        # ── Rendu HTML pur : la carte NE SE RECHARGE PAS lors des reruns Streamlit ──
-        map_html = build_map_html(st.session_state.waypoints)
-        components.html(map_html, height=400, scrolling=False)
+        # ── Cache HTML carte : régénéré SEULEMENT si les waypoints ont changé ──
+        current_hash = waypoints_hash(st.session_state.waypoints)
+        if st.session_state.map_html_key != current_hash:
+            st.session_state.map_html     = build_map_html(st.session_state.waypoints)
+            st.session_state.map_html_key = current_hash
+
+        # srcdoc + sandbox : l'iframe est stable entre reruns car le HTML ne change pas
+        components.html(st.session_state.map_html, height=420, scrolling=False)
 
 # ══════════════════════════════════════════
 #  LOG DE NAVIGATION + PROFIL VERTICAL
@@ -477,7 +479,9 @@ if len(st.session_state.waypoints)>1:
                 bt=str(row["Branche"])
                 wp["name"]=bt.split("➔",1)[1].strip() if "➔" in bt else (bt.split("->",1)[1].strip() if "->" in bt else wp["name"])
                 new_wps.append(wp)
-        st.session_state.waypoints=new_wps; st.rerun()
+        st.session_state.waypoints=new_wps
+        st.session_state.map_html=""   # force recalcul carte après suppression segment
+        st.rerun()
 
     df_pdf=df_nav[["Branche","Vent","GS","EET","Fuel","TOC/TOD","Arrivée"]].copy()
     st.download_button("📥 Log PDF",data=create_pdf(df_pdf,metar_val),file_name="nav_log.pdf",use_container_width=True)
