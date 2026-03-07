@@ -444,25 +444,26 @@ def create_pdf(df_nav, metar_text):
     # ─── CALCULS NAV PAR BRANCHE ───
     pdf.set_font("helvetica", "B", 10)
     pdf.cell(0, 8, "CALCULS DE NAVIGATION :", new_x="LMARGIN", new_y="NEXT")
-
-    w2 = [38, 12, 14, 12, 12, 12, 12]
-    cols2 = ["Branche", "FB", "Xmax", "X", "CV", "CM", "CC"]
-
+    
+    w2 = [34, 14, 12, 14, 12, 14, 22, 14]
+    cols2 = ["Branche", "Rv", "d", "Cv", "dm", "Cm", "Deviation", "Cc"]
+    
     pdf.set_font("helvetica", "B", 8)
     pdf.set_fill_color(220, 220, 220)
     for col, width in zip(cols2, w2):
         pdf.cell(width, 8, col, border=1, fill=True, align="C")
     pdf.ln()
-
+    
     pdf.set_font("helvetica", size=8)
     for row in df_nav.itertuples(index=False):
         pdf.cell(w2[0], 8, _pdf_safe(getattr(row, "Branche", "")).replace("➔", "->"), border=1)
-        pdf.cell(w2[1], 8, _pdf_safe(getattr(row, "FB", "")), border=1, align="C")
-        pdf.cell(w2[2], 8, _pdf_safe(getattr(row, "Xmax", "")), border=1, align="C")
-        pdf.cell(w2[3], 8, _pdf_safe(getattr(row, "X", "")), border=1, align="C")
-        pdf.cell(w2[4], 8, _pdf_safe(getattr(row, "CV", "")), border=1, align="C")
-        pdf.cell(w2[5], 8, _pdf_safe(getattr(row, "CM", "")), border=1, align="C")
-        pdf.cell(w2[6], 8, _pdf_safe(getattr(row, "CC", "")), border=1, align="C")
+        pdf.cell(w2[1], 8, _pdf_safe(getattr(row, "Rv", "")), border=1, align="C")
+        pdf.cell(w2[2], 8, _pdf_safe(getattr(row, "d", "")), border=1, align="C")
+        pdf.cell(w2[3], 8, _pdf_safe(getattr(row, "Cv", "")), border=1, align="C")
+        pdf.cell(w2[4], 8, _pdf_safe(getattr(row, "dm", "")), border=1, align="C")
+        pdf.cell(w2[5], 8, _pdf_safe(getattr(row, "Cm", "")), border=1, align="C")
+        pdf.cell(w2[6], 8, "", border=1, align="C")
+        pdf.cell(w2[7], 8, "", border=1, align="C")
         pdf.ln()
 
     out = pdf.output(dest="S")
@@ -755,17 +756,12 @@ if len(st.session_state.waypoints) > 1:
                 terr_p.append(elev2)
                 current_alt = alt_ft
 
-            drift_txt = f"{wca:+.0f}°"
-            cap_txt = f"{fmt_hdg3(cap_mag)} ({drift_txt})"
-            facteur_base = 60.0 / max(1e-9, float(tas))
-            xmax = facteur_base * ws
-            x = xmax * math.sin(wa)            
-            fb_i = int(round(facteur_base))
-            xmax_i = int(round(xmax))
-            x_i = int(round(x))
+            rv_i = int(round(rv)) % 360
+            d_i = int(round(wca))
             cv_i = int(round(cap_vrai)) % 360
+            dm_i = int(round(decl))
             cm_i = int(round(cap_mag)) % 360
-            cc_i = cm_i
+            
             nav_data.append({
                 "Branche": f"{w1['name']}➔{w2['name']}",
                 "Vent": f"{int(wd)}/{int(ws)}kt ({src})",
@@ -778,12 +774,13 @@ if len(st.session_state.waypoints) > 1:
                 "_idx": i,
                 "ETA": eta_dt.strftime("%H:%M"),
                 "Cap": cap_txt,
-                "FB": str(fb_i),
-                "Xmax": str(xmax_i),
-                "X": str(x_i),
-                "CV": f"{cv_i:03d}",
-                "CM": f"{cm_i:03d}",
-                "CC": f"{cc_i:03d}",
+                "Rv": f"{rv_i:03d}",
+                "d": f"{d_i:+d}",
+                "Cv": f"{cv_i:03d}",
+                "dm": f"{dm_i:+d}",
+                "Cm": f"{cm_i:03d}",
+                "Déviation": "",
+                "Cc": "",
             })
 
     df_nav = pd.DataFrame(nav_data)
@@ -843,12 +840,13 @@ if len(st.session_state.waypoints) > 1:
             "Fuel",
             "TOC/TOD",
             "Arrivée",
-            "FB",
-            "Xmax",
-            "X",
-            "CV",
-            "CM",
-            "CC",
+            "Rv",
+            "d",
+            "Cv",
+            "dm",
+            "Cm",
+            "Déviation",
+            "Cc",
         ]
     ].copy()
     st.download_button(label="📥 Log PDF", data=create_pdf(df_pdf, metar_val), file_name="nav_log.pdf", use_container_width=True)
