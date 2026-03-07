@@ -25,11 +25,9 @@ HTTP_TIMEOUT = 8
 ARRIVAL_METAR_RADIUS_NM = 15.0
 OPENAIP_API_KEY = os.getenv("OPENAIP_API_KEY", "")
 
-MAP_STYLES = ["Carte Standard", "Satellite"]
-if OPENAIP_API_KEY:
-    MAP_STYLES = ["Carte aviation (openAIP)", "Carte Standard", "Satellite"]
+OPENAIP_DEFAULT_ONLY = bool(OPENAIP_API_KEY)
 
-st.set_page_config(page_title="SkyAssistant V58.5", layout="wide")
+st.set_page_config(page_title="SkyAssistant V58.6", layout="wide")
 
 # =========================================================
 # CSS MINIMAL ET STABLE
@@ -92,8 +90,7 @@ if "waypoints" not in st.session_state:
     st.session_state.waypoints = []
 if "wx_refresh" not in st.session_state:
     st.session_state.wx_refresh = 0
-if "map_style_radio" not in st.session_state:
-    st.session_state.map_style_radio = "Carte aviation (openAIP)" if OPENAIP_API_KEY else "Carte Standard"
+
 
 # =========================================================
 # AIRPORTS
@@ -537,15 +534,6 @@ with col_ctrl:
 
 with col_map:
     if st.session_state.waypoints:
-        st.radio(
-            "Fond de carte",
-            MAP_STYLES,
-            horizontal=True,
-            key="map_style_radio",
-        )
-
-        selected_style = st.session_state.map_style_radio
-
         m = folium.Map(
             location=[st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"]],
             zoom_start=9,
@@ -553,19 +541,11 @@ with col_map:
             tiles=None,
         )
 
-        if selected_style == "Carte aviation (openAIP)" and OPENAIP_API_KEY:
+        if OPENAIP_API_KEY:
             folium.TileLayer(
                 tiles=f"https://api.tiles.openaip.net/api/data/openaip/{{z}}/{{x}}/{{y}}.png?apiKey={OPENAIP_API_KEY}",
                 attr="openAIP",
                 name="Carte aviation (openAIP)",
-                overlay=False,
-                control=False,
-            ).add_to(m)
-        elif selected_style == "Satellite":
-            folium.TileLayer(
-                tiles="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
-                attr="Google Satellite",
-                name="Satellite",
                 overlay=False,
                 control=False,
             ).add_to(m)
@@ -594,7 +574,7 @@ with col_map:
                 icon=folium.Icon(color=icon_color, icon=icon_name, prefix="fa"),
             ).add_to(m)
 
-        st_folium(m, width="100%", height=380, key=f"map_{selected_style}", returned_objects=[])
+        st_folium(m, width="100%", height=380, key="map_openaip_only", returned_objects=[])
 
 # =========================================================
 # NAV LOG + PROFILE
