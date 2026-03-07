@@ -450,9 +450,6 @@ with col_ctrl:
     dist_in = st.number_input("Distance (NM)", 0.1, 300.0, 15.0, step=0.1)
     alt_in = st.number_input("Alt Croisière (ft)", 1000, 12500, 2500, step=500)
 
-    if st.session_state.map_style != chosen_style:
-        st.session_state.map_style = chosen_style
-
     use_auto = st.toggle("Vent Auto", True)
     m_wind = None
     if not use_auto:
