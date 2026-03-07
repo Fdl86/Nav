@@ -1,8 +1,5 @@
 import streamlit as st
-import re
-import numpy as np
-from bisect import bisect_left
-from concurrent.futures import ThreadPoolExecutor
+import requests
 import pandas as pd
 import datetime as dt
 import math
@@ -11,6 +8,9 @@ from streamlit_folium import st_folium
 import plotly.graph_objects as go
 from fpdf import FPDF
 import re
+import numpy as np
+from bisect import bisect_left
+from concurrent.futures import ThreadPoolExecutor
 
 # ─── CONFIGURATION ───
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
