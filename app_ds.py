@@ -21,10 +21,9 @@ PRESSURE_MAP = {1000: 975, 1500: 960, 2000: 950, 2500: 925, 3000: 900, 5000: 850
 HTTP_TIMEOUT = 8
 ARRIVAL_METAR_RADIUS_NM = 15.0
 OPENAIP_API_KEY = os.getenv("OPENAIP_API_KEY", "")
-MAP_STYLES = ["Carte Standard", "Carte aviation (openAIP)", "Satellite"]
 
 # ─── PAGE ───
-st.set_page_config(page_title="SkyAssistant V58.4", layout="wide")
+st.set_page_config(page_title="SkyAssistant V58.5", layout="wide")
 
 st.markdown("""
 <style>
@@ -48,7 +47,7 @@ div[data-testid="stDataEditor"] [data-testid="stElementToolbar"] { display: none
 @st.cache_resource
 def get_http_session():
     s = requests.Session()
-    s.headers.update({"User-Agent": "SkyAssistant/58.4"})
+    s.headers.update({"User-Agent": "SkyAssistant/58.5"})
     return s
 
 SESSION = get_http_session()
@@ -58,8 +57,6 @@ if "waypoints" not in st.session_state:
     st.session_state.waypoints = []
 if "wx_refresh" not in st.session_state:
     st.session_state.wx_refresh = 0
-if "map_style" not in st.session_state:
-    st.session_state["map_style"] = "Carte Standard"
 
 # ─── AIRPORTS ───
 @st.cache_data(ttl=86400)
@@ -101,14 +98,6 @@ def _pdf_safe(s: object) -> str:
     s = str(s)
     s = s.replace("➔", "->").replace("→", "->").replace("—", "-").replace("–", "-")
     return s.encode("latin-1", "ignore").decode("latin-1")
-
-def haversine_nm(lat1, lon1, lat2, lon2) -> float:
-    R_km = 6371.0
-    dlat = math.radians(lat2 - lat1)
-    dlon = math.radians(lon2 - lon1)
-    a = (math.sin(dlat / 2) ** 2
-         + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2)
-    return R_km * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a)) / 1.852
 
 @st.cache_data(ttl=86400)
 def airports_df_fr_lf():
@@ -158,8 +147,7 @@ def get_arrival_metar_candidate(waypoints, dep_icao: str):
 def _elevation_ft_cached(lat: float, lon: float) -> int:
     r = SESSION.get(ELEVATION_URL, params={"latitude": lat, "longitude": lon}, timeout=HTTP_TIMEOUT)
     r.raise_for_status()
-    j = r.json()
-    return round(j.get("elevation", [0])[0] * 3.28084)
+    return round(r.json().get("elevation", [0])[0] * 3.28084)
 
 _elev_local_cache = {}
 
@@ -300,7 +288,7 @@ def create_pdf(df_nav, metar_text):
 
 # ─── SIDEBAR ───
 with st.sidebar:
-    st.title("✈️ SkyAssistant V58.4")
+    st.title("✈️ SkyAssistant V58.5")
     if st.button("🔄 Rafraîchir météo", use_container_width=True):
         st.session_state.wx_refresh += 1
         st.rerun()
@@ -366,19 +354,8 @@ if st.session_state.waypoints:
         with st.expander(f"📄 TAF départ — {dep_icao}", expanded=False):
             st.code(taf_val, language="text")
 
-# ─── SECTION CARTE ───
-st.markdown('<div class="sa-section"><h3 style="margin-bottom:0.4rem;">🗺️ Navigation & Carte</h3></div>', unsafe_allow_html=True)
-
-# ── FOND DE CARTE : radio horizontal PLEINE LARGEUR, hors de toute colonne ──
-chosen_style = st.radio(
-    "🗺️ Fond de carte",
-    MAP_STYLES,
-    index=MAP_STYLES.index(st.session_state["map_style"]),
-    horizontal=True,
-)
-if chosen_style != st.session_state["map_style"]:
-    st.session_state["map_style"] = chosen_style
-    st.rerun()
+# ─── NAVIGATION & CARTE ───
+st.markdown('<div class="sa-section"><h3 style="margin-bottom:0.2rem;">🗺️ Navigation & Carte</h3></div>', unsafe_allow_html=True)
 
 col_map, col_ctrl = st.columns([2, 1])
 
@@ -416,27 +393,47 @@ with col_ctrl:
 
 with col_map:
     if st.session_state.waypoints:
-        selected_style = st.session_state["map_style"]
 
         m = folium.Map(
             location=[st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"]],
-            zoom_start=9, control_scale=True, tiles=None,
+            zoom_start=9,
+            control_scale=True,
+            tiles=None,   # on gère les tuiles manuellement ci-dessous
         )
 
-        if selected_style == "Carte aviation (openAIP)" and OPENAIP_API_KEY:
+        # ── Couches de fond — toutes ajoutées, LayerControl permet de basculer ──
+        folium.TileLayer(
+            "openstreetmap",
+            name="🗺️ Standard",
+            overlay=False,
+            control=True,
+            show=True,          # couche active par défaut
+        ).add_to(m)
+
+        folium.TileLayer(
+            tiles="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
+            attr="Google Satellite",
+            name="🛰️ Satellite",
+            overlay=False,
+            control=True,
+            show=False,
+        ).add_to(m)
+
+        if OPENAIP_API_KEY:
             folium.TileLayer(
                 tiles=f"https://api.tiles.openaip.net/api/data/openaip/{{z}}/{{x}}/{{y}}.png?apiKey={OPENAIP_API_KEY}",
-                attr="openAIP", name="openAIP", overlay=False, control=False,
+                attr="openAIP",
+                name="✈️ Aviation (openAIP)",
+                overlay=False,
+                control=True,
+                show=False,
             ).add_to(m)
-        elif selected_style == "Satellite":
-            folium.TileLayer(
-                tiles="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
-                attr="Google Satellite", name="Satellite", overlay=False, control=False,
-            ).add_to(m)
-        else:
-            folium.TileLayer("openstreetmap", name="Carte Standard", overlay=False, control=False).add_to(m)
 
-        folium.PolyLine([[w["lat"], w["lon"]] for w in st.session_state.waypoints], color="red", weight=3).add_to(m)
+        # ── Route & marqueurs ──
+        folium.PolyLine(
+            [[w["lat"], w["lon"]] for w in st.session_state.waypoints],
+            color="red", weight=3,
+        ).add_to(m)
 
         num_w = len(st.session_state.waypoints)
         for i, w in enumerate(st.session_state.waypoints):
@@ -446,13 +443,15 @@ with col_map:
                 icon_c, icon_t = "red", "flag"
             else:
                 icon_c, icon_t = "orange", "circle"
-            folium.Marker([w["lat"], w["lon"]], popup=w["name"],
-                          icon=folium.Icon(color=icon_c, icon=icon_t, prefix="fa")).add_to(m)
+            folium.Marker(
+                [w["lat"], w["lon"]], popup=w["name"],
+                icon=folium.Icon(color=icon_c, icon=icon_t, prefix="fa"),
+            ).add_to(m)
 
-        # Clé dynamique = nouveau widget à chaque changement de style → re-rendu garanti
-        st_folium(m, width="100%", height=380,
-                  key=f"map_{selected_style.replace(' ', '_')}",
-                  returned_objects=[])
+        # ── Bouton de sélection des couches en haut à droite de la carte ──
+        folium.LayerControl(position="topright", collapsed=False).add_to(m)
+
+        st_folium(m, width="100%", height=380, key="folium_map", returned_objects=[])
 
 # ─── LOG + PROFIL ───
 if len(st.session_state.waypoints) > 1:
