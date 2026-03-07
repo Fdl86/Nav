@@ -32,26 +32,19 @@ st.set_page_config(page_title="SkyAssistant V58.3", layout="wide")
 st.markdown(
     """
 <style>
-/* Empêche le rognage vertical des blocs de titres */
-div[data-testid="stMarkdown"],
-div[data-testid="stMarkdownContainer"],
-div[data-testid="stHeading"],
-div[data-testid="stElementContainer"] {
-    overflow: visible !important;
+.sa-title {
+    font-size: 1.55rem;
+    font-weight: 700;
+    line-height: 1.35;
+    margin: 0 0 0.35rem 0;
+    padding: 0;
 }
-/* Titres Streamlit */
-h1, h2, h3, h4, h5, h6 {
-    line-height: 1.35 !important;
-    padding-top: 0.2rem !important;
-    padding-bottom: 0.15rem !important;
-    overflow: visible !important;
+.sa-divider {
+    margin-top: 0;
+    margin-bottom: 0.6rem;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
 }
-/* Cas fréquent: le wrapper flex du titre coupe le haut */
-div[data-testid="stHeading"] > div {
-    overflow: visible !important;
-    align-items: center !important;
-    min-height: 2rem !important;
-}
+</style>
 div[data-testid="stDataFrame"] [data-testid="stElementToolbar"],
 div[data-testid="stDataEditor"] [data-testid="stElementToolbar"] {
     display: none !important;
