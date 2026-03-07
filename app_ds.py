@@ -443,6 +443,15 @@ if st.session_state.waypoints:
 col_map, col_ctrl = st.columns([2, 1])
 
 with col_ctrl:
+    if "map_style" not in st.session_state:
+    st.session_state.map_style = "Carte Standard"
+
+    st.session_state.map_style = st.selectbox(
+        "Fond de carte",
+        ["Carte Standard", "Carte aviation (openAIP)", "Satellite"],
+        index=["Carte Standard", "Carte aviation (openAIP)", "Satellite"].index(st.session_state.map_style),
+    )
+    
     st.markdown('<div class="sa-section"><h3 style="margin-bottom:0.2rem;">📍 Ajouter Segment</h3></div>', unsafe_allow_html=True)
     rv_in = st.number_input("Route Vraie (Rv) °", 0, 359, 0, step=1)
     st.caption(f"Route affichée : {fmt_hdg3(rv_in)}°")
@@ -487,36 +496,71 @@ with col_map:
             ],
             zoom_start=9,
             control_scale=True,
+            tiles=None,
         )
 
-        # ─── CARTE STANDARD ───
-        folium.TileLayer(
-            "openstreetmap",
-            name="Carte Standard",
-            overlay=False,
-            control=True,
-        ).add_to(m)
+        # On ajoute d'abord la couche choisie pour qu'elle reste celle affichée après rerun
+        if st.session_state.map_style == "Carte Standard":
+            folium.TileLayer(
+                "openstreetmap",
+                name="Carte Standard",
+                overlay=False,
+                control=True,
+            ).add_to(m)
 
-        # ─── OPENAIP (complément aviation) ───
-        if OPENAIP_API_KEY:
+        elif st.session_state.map_style == "Carte aviation (openAIP)":
+            if OPENAIP_API_KEY:
+                folium.TileLayer(
+                    tiles=f"https://api.tiles.openaip.net/api/data/openaip/{{z}}/{{x}}/{{y}}.png?apiKey={OPENAIP_API_KEY}",
+                    attr="openAIP",
+                    name="Carte aviation (openAIP)",
+                    overlay=False,
+                    control=True,
+                ).add_to(m)
+            else:
+                folium.TileLayer(
+                    "openstreetmap",
+                    name="Carte Standard",
+                    overlay=False,
+                    control=True,
+                ).add_to(m)
+
+        elif st.session_state.map_style == "Satellite":
+            folium.TileLayer(
+                tiles="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
+                attr="Google Satellite",
+                name="Satellite",
+                overlay=False,
+                control=True,
+            ).add_to(m)
+
+        # On ajoute aussi les autres couches pour pouvoir changer si besoin
+        if st.session_state.map_style != "Carte Standard":
+            folium.TileLayer(
+                "openstreetmap",
+                name="Carte Standard",
+                overlay=False,
+                control=True,
+            ).add_to(m)
+
+        if st.session_state.map_style != "Carte aviation (openAIP)" and OPENAIP_API_KEY:
             folium.TileLayer(
                 tiles=f"https://api.tiles.openaip.net/api/data/openaip/{{z}}/{{x}}/{{y}}.png?apiKey={OPENAIP_API_KEY}",
-                attr='openAIP',
+                attr="openAIP",
                 name="Carte aviation (openAIP)",
                 overlay=False,
                 control=True,
             ).add_to(m)
 
-        # ─── SATELLITE ───
-        folium.TileLayer(
-            tiles="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
-            attr="Google Satellite",
-            name="Satellite",
-            overlay=False,
-            control=True,
-        ).add_to(m)
+        if st.session_state.map_style != "Satellite":
+            folium.TileLayer(
+                tiles="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
+                attr="Google Satellite",
+                name="Satellite",
+                overlay=False,
+                control=True,
+            ).add_to(m)
 
-        # ─── TRACE ROUTE ───
         folium.PolyLine(
             [[w["lat"], w["lon"]] for w in st.session_state.waypoints],
             color="red",
@@ -524,8 +568,6 @@ with col_map:
         ).add_to(m)
 
         num_w = len(st.session_state.waypoints)
-
-        # ─── WAYPOINTS ───
         for i, w in enumerate(st.session_state.waypoints):
             if i == 0:
                 icon_c, icon_t = "blue", "plane"
