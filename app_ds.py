@@ -32,46 +32,16 @@ st.set_page_config(page_title="SkyAssistant V58.3", layout="wide")
 st.markdown(
     """
 <style>
-.sa-title {
-    font-size: 1.55rem;
+.sa-title-clean {
+    font-size: 1.45rem;
     font-weight: 700;
-    line-height: 1.35;
+    line-height: 1.25;
     margin: 0 0 0.35rem 0;
     padding: 0;
 }
+
 .sa-divider {
     margin-top: 0;
-    margin-bottom: 0.6rem;
-    border-bottom: 1px solid rgba(255,255,255,0.08);
-}
-div[data-testid="stDataFrame"] [data-testid="stElementToolbar"],
-div[data-testid="stDataEditor"] [data-testid="stElementToolbar"] {
-    display: none !important;
-}
-.block-container {
-    padding-top: 1.1rem;
-    padding-bottom: 1.5rem;
-}
-.sa-card {
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 14px;
-    padding: 14px 16px;
-    background: rgba(255,255,255,0.02);
-    margin-bottom: 0.75rem;
-}
-.sa-card h4 {
-    margin: 0 0 0.35rem 0;
-    font-size: 0.95rem;
-}
-.sa-card p {
-    margin: 0;
-    opacity: 0.95;
-    line-height: 1.4;
-    white-space: pre-wrap;
-    word-break: break-word;
-}
-.sa-divider {
-    margin-top: 0.15rem;
     margin-bottom: 0.6rem;
     border-bottom: 1px solid rgba(255,255,255,0.08);
 }
@@ -437,7 +407,7 @@ if st.session_state.waypoints:
     arr_candidate = get_arrival_metar_candidate(st.session_state.waypoints, dep_icao)
 
     with weather_placeholder.container():
-        st.markdown('<div class="sa-title">🌦️ Météo</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sa-title-clean">Météo</div>', unsafe_allow_html=True)
         st.markdown('<div class="sa-divider"></div>', unsafe_allow_html=True)
         col_wx1, col_wx2 = st.columns(2)
         with col_wx1:
