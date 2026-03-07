@@ -11,8 +11,10 @@ import re
 import numpy as np
 from bisect import bisect_left
 from concurrent.futures import ThreadPoolExecutor
+import os
 
 # ─── CONFIGURATION ───
+OPENAIP_API_KEY = os.getenv("OPENAIP_API_KEY", "")
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
 ELEVATION_URL = "https://api.open-meteo.com/v1/elevation"
 NOAA_DECL_URL = "https://www.ngdc.noaa.gov/geomag-web/calculators/calculateDeclination"
@@ -495,14 +497,15 @@ with col_map:
             control=True,
         ).add_to(m)
 
-        # ─── CARTE VFR (OpenFlightMaps) ───
-        folium.TileLayer(
-            tiles="https://tiles.openflightmaps.org/tiles/256/{z}/{x}/{y}.png",
-            attr="OpenFlightMaps",
-            name="Carte VFR",
-            overlay=False,
-            control=True,
-        ).add_to(m)
+        # ─── OPENAIP (complément aviation) ───
+        if OPENAIP_API_KEY:
+            folium.TileLayer(
+                tiles=f"https://api.tiles.openaip.net/api/data/openaip/{z}/{x}/{y}.png?apiKey={OPENAIP_API_KEY}",
+                attr='openAIP',
+                name="Carte aviation (openAIP)",
+                overlay=False,
+                control=True,
+            ).add_to(m)
 
         # ─── SATELLITE ───
         folium.TileLayer(
@@ -524,7 +527,6 @@ with col_map:
 
         # ─── WAYPOINTS ───
         for i, w in enumerate(st.session_state.waypoints):
-
             if i == 0:
                 icon_c, icon_t = "blue", "plane"
             elif i == num_w - 1:
