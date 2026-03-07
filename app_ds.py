@@ -25,6 +25,8 @@ HTTP_TIMEOUT = 8
 ARRIVAL_METAR_RADIUS_NM = 15.0
 OPENAIP_API_KEY = os.getenv("OPENAIP_API_KEY", "")
 
+OPENAIP_DEFAULT_ONLY = bool(OPENAIP_API_KEY)
+
 st.set_page_config(page_title="SkyAssistant V58.6", layout="wide")
 
 # =========================================================
@@ -539,28 +541,21 @@ with col_map:
             tiles=None,
         )
 
-    if OPENAIP_API_KEY:
-        m = folium.Map(
-            location=[st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"]],
-            zoom_start=9,
-            control_scale=True,
-            tiles=None,
-        )
-    folium.TileLayer(
-        tiles=f"https://api.tiles.openaip.net/api/data/openaip/{{z}}/{{x}}/{{y}}.png?apiKey={OPENAIP_API_KEY}",
-        attr="openAIP",
-        name="Carte aviation (openAIP)",
-    ).add_to(m)
-    
-    # Fond OSM en dessous pour que la carte OpenAIP soit lisible
-    folium.TileLayer("openstreetmap", name="OSM", overlay=False, control=False).add_to(m)
-else:
-    m = folium.Map(
-        location=[st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"]],
-        zoom_start=9,
-        control_scale=True,
-        tiles="openstreetmap",  # ← tiles directement ici, pas tiles=None
-    )
+        if OPENAIP_API_KEY:
+            folium.TileLayer(
+                tiles=f"https://api.tiles.openaip.net/api/data/openaip/{{z}}/{{x}}/{{y}}.png?apiKey={OPENAIP_API_KEY}",
+                attr="openAIP",
+                name="Carte aviation (openAIP)",
+                overlay=False,
+                control=False,
+            ).add_to(m)
+        else:
+            folium.TileLayer(
+                "openstreetmap",
+                name="Carte Standard",
+                overlay=False,
+                control=False,
+            ).add_to(m)
 
         folium.PolyLine([[w["lat"], w["lon"]] for w in st.session_state.waypoints], color="red", weight=3).add_to(m)
 
