@@ -32,12 +32,35 @@ st.set_page_config(page_title="SkyAssistant V58.3", layout="wide")
 st.markdown(
     """
 <style>
-.sa-title-clean {
-    font-size: 1.45rem;
-    font-weight: 700;
-    line-height: 1.25;
+div[data-testid="stDataFrame"] [data-testid="stElementToolbar"],
+div[data-testid="stDataEditor"] [data-testid="stElementToolbar"] {
+    display: none !important;
+}
+
+.block-container {
+    padding-top: 1.1rem;
+    padding-bottom: 1.5rem;
+}
+
+.sa-card {
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 14px;
+    padding: 14px 16px;
+    background: rgba(255,255,255,0.02);
+    margin-bottom: 0.75rem;
+}
+
+.sa-card h4 {
     margin: 0 0 0.35rem 0;
-    padding: 0;
+    font-size: 0.95rem;
+}
+
+.sa-card p {
+    margin: 0;
+    opacity: 0.95;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    word-break: break-word;
 }
 
 .sa-divider {
