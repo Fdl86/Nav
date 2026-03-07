@@ -477,23 +477,76 @@ with col_ctrl:
 
 with col_map:
     if st.session_state.waypoints:
-        m = folium.Map(location=[st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"]], zoom_start=9)
-        folium.TileLayer(tiles="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}", attr="Google Satellite", name="Vue Satellite", overlay=False, control=True).add_to(m)
-        folium.TileLayer("openstreetmap", name="Carte Standard").add_to(m)
-        folium.PolyLine([[w["lat"], w["lon"]] for w in st.session_state.waypoints], color="red", weight=3).add_to(m)
+
+        m = folium.Map(
+            location=[
+                st.session_state.waypoints[0]["lat"],
+                st.session_state.waypoints[0]["lon"],
+            ],
+            zoom_start=9,
+            control_scale=True,
+        )
+
+        # ─── CARTE STANDARD ───
+        folium.TileLayer(
+            "openstreetmap",
+            name="Carte Standard",
+            overlay=False,
+            control=True,
+        ).add_to(m)
+
+        # ─── CARTE VFR (OpenFlightMaps) ───
+        folium.TileLayer(
+            tiles="https://tiles.openflightmaps.org/tiles/256/{z}/{x}/{y}.png",
+            attr="OpenFlightMaps",
+            name="Carte VFR",
+            overlay=False,
+            control=True,
+        ).add_to(m)
+
+        # ─── SATELLITE ───
+        folium.TileLayer(
+            tiles="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
+            attr="Google Satellite",
+            name="Satellite",
+            overlay=False,
+            control=True,
+        ).add_to(m)
+
+        # ─── TRACE ROUTE ───
+        folium.PolyLine(
+            [[w["lat"], w["lon"]] for w in st.session_state.waypoints],
+            color="red",
+            weight=3,
+        ).add_to(m)
 
         num_w = len(st.session_state.waypoints)
+
+        # ─── WAYPOINTS ───
         for i, w in enumerate(st.session_state.waypoints):
+
             if i == 0:
                 icon_c, icon_t = "blue", "plane"
             elif i == num_w - 1:
                 icon_c, icon_t = "red", "flag"
             else:
                 icon_c, icon_t = "orange", "circle"
-            folium.Marker([w["lat"], w["lon"]], popup=f"{w['name']}", icon=folium.Icon(color=icon_c, icon=icon_t, prefix="fa")).add_to(m)
+
+            folium.Marker(
+                [w["lat"], w["lon"]],
+                popup=w["name"],
+                icon=folium.Icon(color=icon_c, icon=icon_t, prefix="fa"),
+            ).add_to(m)
 
         folium.LayerControl().add_to(m)
-        st_folium(m, width="100%", height=380, key="map_v58", returned_objects=[])
+
+        st_folium(
+            m,
+            width="100%",
+            height=380,
+            key="map_v58",
+            returned_objects=[],
+        )
 
 # ─── LOG + PROFIL ───
 if len(st.session_state.waypoints) > 1:
