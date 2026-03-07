@@ -29,7 +29,7 @@ MAP_STYLES = ["Carte Standard", "Satellite"]
 if OPENAIP_API_KEY:
     MAP_STYLES = ["Carte aviation (openAIP)", "Carte Standard", "Satellite"]
 
-st.set_page_config(page_title="SkyAssistant V58.4", layout="wide")
+st.set_page_config(page_title="SkyAssistant V58.5", layout="wide")
 
 # =========================================================
 # CSS MINIMAL ET STABLE
@@ -79,7 +79,7 @@ div[data-testid="stDataEditor"] [data-testid="stElementToolbar"] {
 @st.cache_resource
 def get_http_session():
     session = requests.Session()
-    session.headers.update({"User-Agent": "SkyAssistant/58.4"})
+    session.headers.update({"User-Agent": "SkyAssistant/58.5"})
     return session
 
 
@@ -92,13 +92,8 @@ if "waypoints" not in st.session_state:
     st.session_state.waypoints = []
 if "wx_refresh" not in st.session_state:
     st.session_state.wx_refresh = 0
-
-# Correction importante : on n'écrase PAS la valeur si elle existe déjà
-# (c'était la cause du reset à chaque ajout de branche)
 if "map_style_radio" not in st.session_state:
-    st.session_state.map_style_radio = (
-        "Carte aviation (openAIP)" if OPENAIP_API_KEY else "Carte Standard"
-    )
+    st.session_state.map_style_radio = "Carte aviation (openAIP)" if OPENAIP_API_KEY else "Carte Standard"
 
 # =========================================================
 # AIRPORTS
@@ -413,7 +408,7 @@ def create_pdf(df_nav, metar_text):
 # SIDEBAR
 # =========================================================
 with st.sidebar:
-    st.title("✈️ SkyAssistant V58.4")
+    st.title("✈️ SkyAssistant V58.5")
 
     if st.button("🔄 Rafraîchir météo", use_container_width=True):
         st.session_state.wx_refresh += 1
@@ -809,7 +804,7 @@ if len(st.session_state.waypoints) > 1:
         new_waypoints = [st.session_state.waypoints[0]]
         for _, row in edited_log.iterrows():
             if not row["❌"]:
-                wp = st.session_state.waypoints[int(row["_idx"])].copy()
+                wp = st.session_state.waypoints[int(row["_idx"])] .copy()
                 wp["arr_type"] = row["Arrivée"]
                 branch_txt = str(row["Branche"])
                 if "➔" in branch_txt:
