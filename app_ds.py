@@ -87,7 +87,7 @@ if "waypoints" not in st.session_state:
 if "wx_refresh" not in st.session_state:
     st.session_state.wx_refresh = 0
 if "map_style" not in st.session_state:
-    st.session_state.map_style = "Carte Standard"
+    st.session_state.map_style = "Carte aviation (openAIP)"
 
 # ─── AIRPORTS ───
 @st.cache_data(ttl=86400)
@@ -495,40 +495,45 @@ with col_map:
             tiles=None,
         )
 
-        selected_style = st.session_state.map_style
+        active = st.session_state.map_style
 
-        folium.TileLayer(
-            "openstreetmap",
-            name="Carte Standard",
-            overlay=False,
-            control=True,
-            show=(selected_style == "Carte Standard"),
-        ).add_to(m)
-
-        if OPENAIP_API_KEY:
+        def add_osm(layer_name="Carte Standard"):
             folium.TileLayer(
-                tiles=f"https://api.tiles.openaip.net/api/data/openaip/{{z}}/{{x}}/{{y}}.png?apiKey={OPENAIP_API_KEY}",
-                attr="openAIP",
-                name="Carte aviation (openAIP)",
+                "openstreetmap",
+                name=layer_name,
                 overlay=False,
                 control=True,
-                show=(selected_style == "Carte aviation (openAIP)"),
+                show=(active == layer_name),
             ).add_to(m)
 
-        folium.TileLayer(
-            tiles="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
-            attr="Google Satellite",
-            name="Satellite",
-            overlay=False,
-            control=True,
-            show=(selected_style == "Satellite"),
-        ).add_to(m)
+        def add_sat(layer_name="Satellite"):
+            folium.TileLayer(
+                tiles="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
+                attr="Google Satellite",
+                name=layer_name,
+                overlay=False,
+                control=True,
+                show=(active == layer_name),
+            ).add_to(m)
 
-        folium.PolyLine(
-            [[w["lat"], w["lon"]] for w in st.session_state.waypoints],
-            color="red",
-            weight=3,
-        ).add_to(m)
+        def add_openaip(layer_name="Carte aviation (openAIP)"):
+            if OPENAIP_API_KEY:
+                folium.TileLayer(
+                    tiles=f"https://api.tiles.openaip.net/api/data/openaip/{{z}}/{{x}}/{{y}}.png?apiKey={OPENAIP_API_KEY}",
+                    attr="openAIP",
+                    name=layer_name,
+                    overlay=False,
+                    control=True,
+                    show=(active == layer_name),
+                ).add_to(m)
+            else:
+                add_osm(layer_name)
+
+        add_osm()
+        add_openaip()
+        add_sat()
+
+        folium.PolyLine([[w["lat"], w["lon"]] for w in st.session_state.waypoints], color="red", weight=3).add_to(m)
 
         num_w = len(st.session_state.waypoints)
         for i, w in enumerate(st.session_state.waypoints):
@@ -538,22 +543,10 @@ with col_map:
                 icon_c, icon_t = "red", "flag"
             else:
                 icon_c, icon_t = "orange", "circle"
-
-            folium.Marker(
-                [w["lat"], w["lon"]],
-                popup=f"{w['name']}",
-                icon=folium.Icon(color=icon_c, icon=icon_t, prefix="fa"),
-            ).add_to(m)
+            folium.Marker([w["lat"], w["lon"]], popup=f"{w['name']}", icon=folium.Icon(color=icon_c, icon=icon_t, prefix="fa")).add_to(m)
 
         folium.LayerControl().add_to(m)
-
-        st_folium(
-            m,
-            width="100%",
-            height=380,
-            key="map_v58_1",
-            returned_objects=[],
-        )
+        st_folium(m, width="100%", height=380, key="map_v58_1", returned_objects=[])
 
 # ─── LOG + PROFIL ───
 if len(st.session_state.waypoints) > 1:
