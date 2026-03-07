@@ -22,7 +22,7 @@ HTTP_TIMEOUT = 8
 ARRIVAL_METAR_RADIUS_NM = 15.0
 
 # ─── PAGE ───
-APP_VERSION = "59.1-openAIP"
+APP_VERSION = "59.1-openAIP-satellite"
 st.set_page_config(page_title=f"SkyAssistant {APP_VERSION}", layout="wide")
 
 # ─── UI / UX V58 ───
@@ -76,18 +76,25 @@ def get_http_session():
 SESSION = get_http_session()
 
 def get_openaip_key():
-    key = os.getenv("OPENAIP_API_KEY")
-    if not key:
-        raise RuntimeError("OPENAIP_API_KEY manquante")
-    return key
+    try:
+        key = st.secrets.get("OPENAIP_API_KEY", "")
+    except Exception:
+        key = os.getenv("OPENAIP_API_KEY", "")
+    return key.strip()
 
 OPENAIP_API_KEY = get_openaip_key()
-    
+
 # ─── STATE ───
 if "waypoints" not in st.session_state:
     st.session_state.waypoints = []
 if "wx_refresh" not in st.session_state:
     st.session_state.wx_refresh = 0
+if "map_style" not in st.session_state:
+    st.session_state.map_style = "openAIP"
+if "map_center" not in st.session_state:
+    st.session_state.map_center = None
+if "map_zoom" not in st.session_state:
+    st.session_state.map_zoom = 9
 
 # ─── AIRPORTS ───
 @st.cache_data(ttl=86400)
@@ -181,22 +188,50 @@ def format_hhmm_from_seconds(total_seconds: float) -> str:
     mm = (total_seconds % 3600) // 60
     return f"{hh:02d}:{mm:02d}"
 
-def build_openaip_map(waypoints):
+def build_map(waypoints, map_style, center=None, zoom=None):
+    if waypoints:
+        default_center = [waypoints[0]["lat"], waypoints[0]["lon"]]
+    else:
+        default_center = [46.5877, 0.3069]
+
     m = folium.Map(
-        location=[waypoints[0]["lat"], waypoints[0]["lon"]],
-        zoom_start=9,
+        location=center or default_center,
+        zoom_start=zoom or 9,
         control_scale=True,
         tiles=None,
     )
-    folium.TileLayer(
-        tiles=f"https://api.tiles.openaip.net/api/data/openaip/{{z}}/{{x}}/{{y}}.png?apiKey={OPENAIP_API_KEY}",
-        attr="openAIP",
-        name="openAIP",
-        overlay=False,
-        control=False,
-        show=True,
-    ).add_to(m)
-    folium.PolyLine([[w["lat"], w["lon"]] for w in waypoints], color="red", weight=3).add_to(m)
+
+    if map_style == "Satellite":
+        folium.TileLayer(
+            tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+            attr="Esri World Imagery",
+            name="Satellite",
+            overlay=False,
+            control=False,
+            show=True,
+        ).add_to(m)
+    else:
+        if OPENAIP_API_KEY:
+            folium.TileLayer(
+                tiles=f"https://api.tiles.openaip.net/api/data/openaip/{{z}}/{{x}}/{{y}}.png?apiKey={OPENAIP_API_KEY}",
+                attr="openAIP",
+                name="openAIP",
+                overlay=False,
+                control=False,
+                show=True,
+            ).add_to(m)
+        else:
+            folium.TileLayer(
+                tiles="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+                attr="OpenStreetMap",
+                name="OSM fallback",
+                overlay=False,
+                control=False,
+                show=True,
+            ).add_to(m)
+
+    if len(waypoints) >= 2:
+        folium.PolyLine([[w["lat"], w["lon"]] for w in waypoints], color="red", weight=3).add_to(m)
 
     last_idx = len(waypoints) - 1
     for i, w in enumerate(waypoints):
@@ -211,6 +246,7 @@ def build_openaip_map(waypoints):
             popup=w["name"],
             icon=folium.Icon(color=icon_c, icon=icon_t, prefix="fa"),
         ).add_to(m)
+
     return m
 
 def summarize_route_names(waypoints, max_items: int = 5) -> str:
@@ -409,6 +445,13 @@ with st.sidebar:
         st.session_state.wx_refresh += 1
         st.rerun()
 
+    map_style = st.selectbox(
+        "🗺️ Fond de carte",
+        ["openAIP", "Satellite"],
+        index=0 if st.session_state.map_style == "openAIP" else 1,
+    )
+    st.session_state.map_style = map_style
+
     search = st.text_input("🔍 Rechercher OACI", "").upper()
     sugg = [k for k in AIRPORTS.keys() if k.startswith(search)] if search else []
 
@@ -425,6 +468,7 @@ with st.sidebar:
                 "elev": elev,
                 "arr_type": "Direct",
             }]
+            st.session_state.map_center = [ap0["lat"], ap0["lon"]]
             st.rerun()
 
     if st.session_state.waypoints:
@@ -445,6 +489,8 @@ with st.sidebar:
 
     if st.button("🗑️ Reset", use_container_width=True):
         st.session_state.waypoints = []
+        st.session_state.map_center = None
+        st.session_state.map_zoom = 9
         st.rerun()
 
 mission_placeholder = st.container()
@@ -514,11 +560,28 @@ with col_ctrl:
 
 with col_map:
     if st.session_state.waypoints:
-        if not OPENAIP_API_KEY:
-            st.warning("OPENAIP_API_KEY manquante : la carte openAIP ne peut pas être affichée sans clé API.")
-        else:
-            m = build_openaip_map(st.session_state.waypoints)
-            st_folium(m, width="100%", height=380, key="map_v59_openaip")
+        if st.session_state.map_style == "openAIP" and not OPENAIP_API_KEY:
+            st.warning("OPENAIP_API_KEY manquante : openAIP indisponible. Bascule sur Satellite ou configure la clé.")
+        m = build_map(
+            st.session_state.waypoints,
+            st.session_state.map_style,
+            center=st.session_state.map_center,
+            zoom=st.session_state.map_zoom,
+        )
+        map_data = st_folium(m, width="100%", height=380, key="map_v59_stateful")
+
+        if map_data:
+            center_data = map_data.get("center")
+            zoom_data = map_data.get("zoom")
+
+            if isinstance(center_data, dict) and "lat" in center_data and "lng" in center_data:
+                st.session_state.map_center = [center_data["lat"], center_data["lng"]]
+
+            if zoom_data is not None:
+                try:
+                    st.session_state.map_zoom = int(zoom_data)
+                except Exception:
+                    pass
 
 # ─── LOG + PROFIL ───
 if len(st.session_state.waypoints) > 1:
