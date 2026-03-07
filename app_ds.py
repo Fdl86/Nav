@@ -19,7 +19,7 @@ ELEVATION_URL = "https://api.open-meteo.com/v1/elevation"
 NOAA_DECL_URL = "https://www.ngdc.noaa.gov/geomag-web/calculators/calculateDeclination"
 PRESSURE_MAP = {1000: 975, 1500: 960, 2000: 950, 2500: 925, 3000: 900, 5000: 850, 7000: 750}
 HTTP_TIMEOUT = 8
-ARRIVAL_METAR_RADIUS_NM = 15.0
+ARRIVAL_METAR_RADIUS_NM = 5.0
 
 # ─── PAGE ───
 APP_VERSION = "59.1-openAIP-satellite"
@@ -568,20 +568,13 @@ with col_map:
             center=st.session_state.map_center,
             zoom=st.session_state.map_zoom,
         )
-        map_data = st_folium(m, width="100%", height=380, key="map_v59_stateful")
-
-        if map_data:
-            center_data = map_data.get("center")
-            zoom_data = map_data.get("zoom")
-
-            if isinstance(center_data, dict) and "lat" in center_data and "lng" in center_data:
-                st.session_state.map_center = [center_data["lat"], center_data["lng"]]
-
-            if zoom_data is not None:
-                try:
-                    st.session_state.map_zoom = int(zoom_data)
-                except Exception:
-                    pass
+    st_folium(
+        m,
+        width="100%",
+        height=380,
+        key="map_v59_stateful",
+        returned_objects=[]
+    )
 
 # ─── LOG + PROFIL ───
 if len(st.session_state.waypoints) > 1:
