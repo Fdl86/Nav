@@ -407,20 +407,30 @@ def create_pdf(df_nav, metar_text):
 def build_map(waypoints: list) -> folium.Map:
     center = [waypoints[0]["lat"], waypoints[0]["lon"]]
 
-    # Fond OSM toujours présent
-    m = folium.Map(location=center, zoom_start=9, control_scale=True, tiles="openstreetmap")
+    # tiles=None + couches explicites pour garantir l'ordre OSM -> OpenAIP
+    m = folium.Map(location=center, zoom_start=9, control_scale=True, tiles=None)
+
+    # Fond OSM en premier
+    folium.TileLayer(
+        tiles="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+        attr="&copy; OpenStreetMap contributors",
+        name="OSM",
+        overlay=False,
+        control=False,
+    ).add_to(m)
 
     if OPENAIP_API_KEY:
-        # OpenAIP en overlay transparent par-dessus OSM — affiché par défaut (show=True)
+        # OpenAIP par-dessus — {z}/{x}/{y} sont des placeholders Leaflet, pas Python
+        openaip_url = "https://api.tiles.openaip.net/api/data/openaip/{z}/{x}/{y}.png?apiKey=" + OPENAIP_API_KEY
         folium.TileLayer(
-            tiles=f"https://api.tiles.openaip.net/api/data/openaip/{{z}}/{{x}}/{{y}}.png?apiKey={OPENAIP_API_KEY}",
+            tiles=openaip_url,
             attr='<a href="https://www.openaip.net/">openAIP</a>',
-            name="Données aviation (openAIP)",
-            overlay=True,
-            control=False,   # pas de bouton on/off, toujours visible
-            show=True,
+            name="OpenAIP",
+            overlay=False,
+            control=False,
             opacity=1.0,
         ).add_to(m)
+
 
     # Tracé de la route
     folium.PolyLine(
