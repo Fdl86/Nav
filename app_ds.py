@@ -450,12 +450,6 @@ with col_ctrl:
     dist_in = st.number_input("Distance (NM)", 0.1, 300.0, 15.0, step=0.1)
     alt_in = st.number_input("Alt Croisière (ft)", 1000, 12500, 2500, step=500)
 
-    chosen_style = st.selectbox(
-        "Fond de carte",
-        MAP_STYLES,
-        index=MAP_STYLES.index(st.session_state.map_style_widget),
-        key="map_style_widget",
-    )
     if st.session_state.map_style != chosen_style:
         st.session_state.map_style = chosen_style
 
@@ -487,6 +481,19 @@ with col_ctrl:
             "arr_type": "Direct",
         })
         st.rerun()
+
+st.markdown("**Fond de carte**")
+
+c1, c2, c3 = st.columns(3)
+
+if c1.button("openAIP", use_container_width=True):
+    st.session_state.map_style = "Carte aviation (openAIP)"
+
+if c2.button("Standard", use_container_width=True):
+    st.session_state.map_style = "Carte Standard"
+
+if c3.button("Satellite", use_container_width=True):
+    st.session_state.map_style = "Satellite"
 
 with col_map:
     if st.session_state.waypoints:
