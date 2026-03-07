@@ -86,10 +86,8 @@ if "waypoints" not in st.session_state:
     st.session_state.waypoints = []
 if "wx_refresh" not in st.session_state:
     st.session_state.wx_refresh = 0
-
-# Streamlit mémorise automatiquement la valeur grâce à la key du selectbox.
 if "map_style" not in st.session_state:
-    st.session_state.map_style = "Carte Standard"
+    st.session_state["map_style"] = "Carte Standard"
 
 # ─── AIRPORTS ───
 @st.cache_data(ttl=86400)
@@ -550,10 +548,10 @@ with col_map:
             m,
             width="100%",
             height=380,
-            key="map_main",
+            key=f"map_{selected_style}",
             returned_objects=[],
         )
-        
+
 # ─── LOG + PROFIL ───
 if len(st.session_state.waypoints) > 1:
     st.markdown("---")
