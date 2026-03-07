@@ -545,6 +545,7 @@ with col_ctrl:
         la2 = math.degrees(la1 + (dist_in / R) * math.cos(brng))
         lo2 = math.degrees(lo1 + (dist_in / R) * math.sin(brng) / max(1e-9, math.cos(la1)))
         elev2 = get_elevation_ft(la2, lo2)
+    
         st.session_state.waypoints.append({
             "name": f"WP{len(st.session_state.waypoints)}",
             "lat": la2,
@@ -556,6 +557,10 @@ with col_ctrl:
             "elev": elev2,
             "arr_type": "Direct",
         })
+    
+        # centre sur la destination de la dernière branche
+        st.session_state.map_center = [la2, lo2]
+    
         st.rerun()
 
 with col_map:
