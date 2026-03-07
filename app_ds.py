@@ -479,20 +479,14 @@ with col_ctrl:
         })
         st.rerun()
 
-st.markdown("**Fond de carte**")
-
-c1, c2, c3 = st.columns(3)
-
-if c1.button("openAIP", use_container_width=True):
-    st.session_state.map_style = "Carte aviation (openAIP)"
-
-if c2.button("Standard", use_container_width=True):
-    st.session_state.map_style = "Carte Standard"
-
-if c3.button("Satellite", use_container_width=True):
-    st.session_state.map_style = "Satellite"
-
 with col_map:
+    st.markdown("Fond de carte")
+        style = st.radio(
+            "",
+            ["Carte aviation (openAIP)", "Carte Standard", "Satellite"],
+            horizontal=True,
+            key="map_style"
+        )   
     if st.session_state.waypoints:
         selected_style = st.session_state.map_style
         m = folium.Map(
