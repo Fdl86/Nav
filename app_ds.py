@@ -499,32 +499,31 @@ with col_map:
 
         selected_style = st.session_state.map_style
 
-        folium.TileLayer(
-            "openstreetmap",
-            name="Carte Standard",
-            overlay=False,
-            control=True,
-            show=(selected_style == "Carte Standard"),
-        ).add_to(m)
-
-        if OPENAIP_API_KEY:
+        if selected_style == "Carte aviation (openAIP)" and OPENAIP_API_KEY:
             folium.TileLayer(
                 tiles=f"https://api.tiles.openaip.net/api/data/openaip/{{z}}/{{x}}/{{y}}.png?apiKey={OPENAIP_API_KEY}",
                 attr="openAIP",
                 name="Carte aviation (openAIP)",
                 overlay=False,
-                control=True,
-                show=(selected_style == "Carte aviation (openAIP)"),
+                control=False,
             ).add_to(m)
 
-        folium.TileLayer(
-            tiles="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
-            attr="Google Satellite",
-            name="Satellite",
-            overlay=False,
-            control=True,
-            show=(selected_style == "Satellite"),
-        ).add_to(m)
+        elif selected_style == "Satellite":
+            folium.TileLayer(
+                tiles="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
+                attr="Google Satellite",
+                name="Satellite",
+                overlay=False,
+                control=False,
+            ).add_to(m)
+
+        else:
+            folium.TileLayer(
+                "openstreetmap",
+                name="Carte Standard",
+                overlay=False,
+                control=False,
+            ).add_to(m)
 
         folium.PolyLine(
             [[w["lat"], w["lon"]] for w in st.session_state.waypoints],
@@ -547,16 +546,11 @@ with col_map:
                 icon=folium.Icon(color=icon_c, icon=icon_t, prefix="fa"),
             ).add_to(m)
 
-        folium.LayerControl().add_to(m)
-
-        # Trick Streamlit : la clé ne dépend que du fond choisi.
-        map_key = f"map_{selected_style}"
-
         st_folium(
             m,
             width="100%",
             height=380,
-            key=map_key,
+            key="map_main",
             returned_objects=[],
         )
 
