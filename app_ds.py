@@ -773,7 +773,6 @@ if len(st.session_state.waypoints) > 1:
             "❌": False,
             "_idx": i,
             "ETA": eta_dt.strftime("%H:%M"),
-            "Cap": cap_txt,
             "Rv": f"{rv_i:03d}",
             "d": f"{d_i:+d}",
             "Cv": f"{cv_i:03d}",
