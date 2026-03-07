@@ -92,8 +92,13 @@ if "waypoints" not in st.session_state:
     st.session_state.waypoints = []
 if "wx_refresh" not in st.session_state:
     st.session_state.wx_refresh = 0
+
+# Correction importante : on n'écrase PAS la valeur si elle existe déjà
+# (c'était la cause du reset à chaque ajout de branche)
 if "map_style_radio" not in st.session_state:
-    st.session_state.map_style_radio = "Carte aviation (openAIP)" if OPENAIP_API_KEY else "Carte Standard"
+    st.session_state.map_style_radio = (
+        "Carte aviation (openAIP)" if OPENAIP_API_KEY else "Carte Standard"
+    )
 
 # =========================================================
 # AIRPORTS
