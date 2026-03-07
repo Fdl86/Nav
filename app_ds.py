@@ -2,7 +2,7 @@ import streamlit as st
 import re
 import numpy as np
 from bisect import bisect_left
-from concurrent.futures import ThreadPoolExecutorquests
+from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
 import datetime as dt
 import math
