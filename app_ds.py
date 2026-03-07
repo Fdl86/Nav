@@ -480,15 +480,21 @@ with col_ctrl:
         st.rerun()
 
 with col_map:
-    st.markdown("Fond de carte")
-    style = st.radio(
-        "",
-        ["Carte aviation (openAIP)", "Carte Standard", "Satellite"],
-        horizontal=True,
-        key="map_style"
-    )   
     if st.session_state.waypoints:
-        selected_style = style
+        current_index = MAP_STYLES.index(st.session_state.map_style)
+
+        selected_style = st.radio(
+            "Fond de carte",
+            MAP_STYLES,
+            index=current_index,
+            horizontal=True,
+            key="map_style_radio",
+        )
+
+        if selected_style != st.session_state.map_style:
+            st.session_state.map_style = selected_style
+            st.rerun()
+
         m = folium.Map(
             location=[st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"]],
             zoom_start=9,
@@ -496,7 +502,7 @@ with col_map:
             tiles=None,
         )
 
-        if selected_style == "Carte aviation (openAIP)" and OPENAIP_API_KEY:
+        if st.session_state.map_style == "Carte aviation (openAIP)" and OPENAIP_API_KEY:
             folium.TileLayer(
                 tiles=f"https://api.tiles.openaip.net/api/data/openaip/{{z}}/{{x}}/{{y}}.png?apiKey={OPENAIP_API_KEY}",
                 attr="openAIP",
@@ -504,7 +510,8 @@ with col_map:
                 overlay=False,
                 control=False,
             ).add_to(m)
-        elif selected_style == "Satellite":
+
+        elif st.session_state.map_style == "Satellite":
             folium.TileLayer(
                 tiles="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
                 attr="Google Satellite",
@@ -512,6 +519,7 @@ with col_map:
                 overlay=False,
                 control=False,
             ).add_to(m)
+
         else:
             folium.TileLayer(
                 "openstreetmap",
@@ -520,7 +528,11 @@ with col_map:
                 control=False,
             ).add_to(m)
 
-        folium.PolyLine([[w["lat"], w["lon"]] for w in st.session_state.waypoints], color="red", weight=3).add_to(m)
+        folium.PolyLine(
+            [[w["lat"], w["lon"]] for w in st.session_state.waypoints],
+            color="red",
+            weight=3,
+        ).add_to(m)
 
         num_w = len(st.session_state.waypoints)
         for i, w in enumerate(st.session_state.waypoints):
@@ -530,9 +542,20 @@ with col_map:
                 icon_c, icon_t = "red", "flag"
             else:
                 icon_c, icon_t = "orange", "circle"
-            folium.Marker([w["lat"], w["lon"]], popup=f"{w['name']}", icon=folium.Icon(color=icon_c, icon=icon_t, prefix="fa")).add_to(m)
 
-        st_folium(m, width="100%", height=380, key=f"map_{selected_style}", returned_objects=[])
+            folium.Marker(
+                [w["lat"], w["lon"]],
+                popup=f"{w['name']}",
+                icon=folium.Icon(color=icon_c, icon=icon_t, prefix="fa"),
+            ).add_to(m)
+
+        st_folium(
+            m,
+            width="100%",
+            height=380,
+            key=f"map_{st.session_state.map_style}",
+            returned_objects=[],
+        )
 
 # ─── LOG + PROFIL ───
 if len(st.session_state.waypoints) > 1:
