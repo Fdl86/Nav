@@ -756,32 +756,32 @@ if len(st.session_state.waypoints) > 1:
                 terr_p.append(elev2)
                 current_alt = alt_ft
 
-            rv_i = int(round(rv)) % 360
-            d_i = int(round(wca))
-            cv_i = int(round(cap_vrai)) % 360
-            dm_i = int(round(decl))
-            cm_i = int(round(cap_mag)) % 360
-            
-            nav_data.append({
-                "Branche": f"{w1['name']}➔{w2['name']}",
-                "Vent": f"{int(wd)}/{int(ws)}kt ({src})",
-                "GS": f"{int(gs)}kt",
-                "EET": f"{int(seg_sec//60):02d}:{int(seg_sec%60):02d}",
-                "Fuel": f"{fuel_branch:.1f}L",
-                "TOC/TOD": tt_str.strip(),
-                "Arrivée": at,
-                "❌": False,
-                "_idx": i,
-                "ETA": eta_dt.strftime("%H:%M"),
-                "Cap": cap_txt,
-                "Rv": f"{rv_i:03d}",
-                "d": f"{d_i:+d}",
-                "Cv": f"{cv_i:03d}",
-                "dm": f"{dm_i:+d}",
-                "Cm": f"{cm_i:03d}",
-                "Déviation": "",
-                "Cc": "",
-            })
+        rv_i = int(round(rv)) % 360
+        d_i = int(round(wca))
+        cv_i = int(round(cap_vrai)) % 360
+        dm_i = int(round(decl))
+        cm_i = int(round(cap_mag)) % 360
+        
+        nav_data.append({
+            "Branche": f"{w1['name']}➔{w2['name']}",
+            "Vent": f"{int(wd)}/{int(ws)}kt ({src})",
+            "GS": f"{int(gs)}kt",
+            "EET": f"{int(seg_sec//60):02d}:{int(seg_sec%60):02d}",
+            "Fuel": f"{fuel_branch:.1f}L",
+            "TOC/TOD": tt_str.strip(),
+            "Arrivée": at,
+            "❌": False,
+            "_idx": i,
+            "ETA": eta_dt.strftime("%H:%M"),
+            "Cap": cap_txt,
+            "Rv": f"{rv_i:03d}",
+            "d": f"{d_i:+d}",
+            "Cv": f"{cv_i:03d}",
+            "dm": f"{dm_i:+d}",
+            "Cm": f"{cm_i:03d}",
+            "Déviation": "",
+            "Cc": "",
+        })
 
     df_nav = pd.DataFrame(nav_data)
 
