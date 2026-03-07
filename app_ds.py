@@ -24,9 +24,9 @@ OPENAIP_API_KEY = os.getenv("OPENAIP_API_KEY", "")
 MAP_STYLES = ["Carte Standard", "Carte aviation (openAIP)", "Satellite"]
 
 # ─── PAGE ───
-st.set_page_config(page_title="SkyAssistant V58.2", layout="wide")
+st.set_page_config(page_title="SkyAssistant V58.3", layout="wide")
 
-# ─── UI / UX V58.2 ───
+# ─── UI / UX ───
 st.markdown(
     """
 <style>
@@ -34,12 +34,10 @@ div[data-testid="stDataFrame"] [data-testid="stElementToolbar"],
 div[data-testid="stDataEditor"] [data-testid="stElementToolbar"] {
     display: none !important;
 }
-
 .block-container {
     padding-top: 1.1rem;
     padding-bottom: 1.5rem;
 }
-
 .sa-card {
     border: 1px solid rgba(255,255,255,0.08);
     border-radius: 14px;
@@ -47,12 +45,10 @@ div[data-testid="stDataEditor"] [data-testid="stElementToolbar"] {
     background: rgba(255,255,255,0.02);
     margin-bottom: 0.75rem;
 }
-
 .sa-card h4 {
     margin: 0 0 0.35rem 0;
     font-size: 0.95rem;
 }
-
 .sa-card p {
     margin: 0;
     opacity: 0.95;
@@ -60,7 +56,6 @@ div[data-testid="stDataEditor"] [data-testid="stElementToolbar"] {
     white-space: pre-wrap;
     word-break: break-word;
 }
-
 .sa-section {
     margin-top: 0.2rem;
     margin-bottom: 0.5rem;
@@ -76,7 +71,7 @@ div[data-testid="stDataEditor"] [data-testid="stElementToolbar"] {
 @st.cache_resource
 def get_http_session():
     s = requests.Session()
-    s.headers.update({"User-Agent": "SkyAssistant/58.2"})
+    s.headers.update({"User-Agent": "SkyAssistant/58.3"})
     return s
 
 SESSION = get_http_session()
@@ -100,8 +95,6 @@ def load_airports():
         )
         fr = df[(df["iso_country"] == "FR") & (df["type"].isin(["large_airport", "medium_airport", "small_airport"]))]
         fr = fr[fr["ident"].astype(str).str.match(r"^LF[A-Z0-9]{2}$")]
-
-        # OPTIMISÉ : itertuples() est nettement plus rapide que iterrows()
         downloaded = {
             row.ident: {"name": row.name, "lat": float(row.latitude_deg), "lon": float(row.longitude_deg)}
             for row in fr.itertuples(index=False)
@@ -159,8 +152,6 @@ def nearest_airfields(lat, lon, radius_nm=15.0, k=5, exclude_icao=None):
     df = airports_df_fr_lf().copy()
     if exclude_icao and is_lf_icao(exclude_icao):
         df = df[df["icao"] != exclude_icao]
-
-    # OPTIMISÉ : calcul haversine vectorisé NumPy
     lat1 = np.radians(lat)
     lon1 = np.radians(lon)
     lat2 = np.radians(df["lat"].to_numpy(dtype=float))
@@ -171,7 +162,6 @@ def nearest_airfields(lat, lon, radius_nm=15.0, k=5, exclude_icao=None):
     c = 2.0 * np.arctan2(np.sqrt(a), np.sqrt(1.0 - a))
     km = 6371.0 * c
     df["d_nm"] = km / 1.852
-
     df = df[df["d_nm"] <= radius_nm].sort_values("d_nm").head(k)
     return df[["icao", "name", "d_nm"]].to_dict("records")
 
@@ -317,7 +307,6 @@ def get_wind_v27_final(lat, lon, alt_ft, time_dt, manual_wind=None, wx_refresh: 
         if not wd_arr or not ws_arr:
             return 0.0, 0.0, "Err"
 
-        # OPTIMISÉ : recherche temporelle en O(log n) via bisect sur timestamps pré-convertis
         t_target = time_dt.timestamp()
         timestamps = [dt.datetime.fromisoformat(t).replace(tzinfo=dt.timezone.utc).timestamp() for t in times]
         pos = bisect_left(timestamps, t_target)
@@ -350,7 +339,6 @@ def create_pdf(df_nav, metar_text):
     cols = ["Branche", "Vent", "GS", "EET", "Fuel", "TOC/TOD", "Arrivée"]
     pdf.set_font("helvetica", "B", 8)
     pdf.set_fill_color(220, 220, 220)
-    # OPTIMISÉ : zip() évite l'indexation manuelle répétée
     for col, width in zip(cols, w):
         pdf.cell(width, 8, col, border=1, fill=True, align="C")
     pdf.ln()
@@ -371,7 +359,7 @@ def create_pdf(df_nav, metar_text):
 
 # ─── SIDEBAR ───
 with st.sidebar:
-    st.title("✈️ SkyAssistant V58.2")
+    st.title("✈️ SkyAssistant V58.3")
     if st.button("🔄 Rafraîchir météo", use_container_width=True):
         st.session_state.wx_refresh += 1
         st.rerun()
@@ -451,11 +439,13 @@ with col_ctrl:
     dist_in = st.number_input("Distance (NM)", 0.1, 300.0, 15.0, step=0.1)
     alt_in = st.number_input("Alt Croisière (ft)", 1000, 12500, 2500, step=500)
 
-    st.selectbox(
-        "Fond de carte",
-        MAP_STYLES,
-        key="map_style",
-    )
+    # ─── FIX FOND DE CARTE ───
+    # On utilise un index explicite + on stocke dans session_state SANS key= pour éviter les conflits
+    _style_idx = MAP_STYLES.index(st.session_state["map_style"])
+    _chosen_style = st.selectbox("Fond de carte", MAP_STYLES, index=_style_idx)
+    if _chosen_style != st.session_state["map_style"]:
+        st.session_state["map_style"] = _chosen_style
+        st.rerun()
 
     use_auto = st.toggle("Vent Auto", True)
     m_wind = None
@@ -505,7 +495,6 @@ with col_map:
                 overlay=False,
                 control=False,
             ).add_to(m)
-
         elif selected_style == "Satellite":
             folium.TileLayer(
                 tiles="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
@@ -514,7 +503,6 @@ with col_map:
                 overlay=False,
                 control=False,
             ).add_to(m)
-
         else:
             folium.TileLayer(
                 "openstreetmap",
@@ -548,7 +536,7 @@ with col_map:
             m,
             width="100%",
             height=380,
-            key=f"map_{selected_style}",
+            key="folium_map",
             returned_objects=[],
         )
 
@@ -594,7 +582,6 @@ if len(st.session_state.waypoints) > 1:
         future_wind = None
         future_decl = None
 
-        # OPTIMISÉ : appels réseau parallélisés par segment
         with ThreadPoolExecutor(max_workers=3) as executor:
             if elev2 <= 0:
                 future_elev = executor.submit(get_elevation_ft, w2["lat"], w2["lon"])
