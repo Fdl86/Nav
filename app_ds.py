@@ -533,7 +533,7 @@ with col_ctrl:
         st.rerun()
 
 with col_map:
-    if st.session_state.waypoints:
+ if st.session_state.waypoints:
         m = folium.Map(
             location=[st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"]],
             zoom_start=9,
@@ -543,11 +543,12 @@ with col_map:
 
         if OPENAIP_API_KEY:
             folium.TileLayer(
-                tiles=f"https://api.tiles.openaip.net/api/data/openaip/{{z}}/{{x}}/{{y}}.png?apiKey={OPENAIP_API_KEY}",
+                tiles=f"https://a.api.tiles.openaip.net/api/data/openaip/{{z}}/{{x}}/{{y}}.png?apiKey={OPENAIP_API_KEY}",
                 attr="openAIP",
                 name="Carte aviation (openAIP)",
                 overlay=False,
                 control=False,
+                tms=False,
             ).add_to(m)
         else:
             folium.TileLayer(
@@ -557,7 +558,11 @@ with col_map:
                 control=False,
             ).add_to(m)
 
-        folium.PolyLine([[w["lat"], w["lon"]] for w in st.session_state.waypoints], color="red", weight=3).add_to(m)
+        folium.PolyLine(
+            [[w["lat"], w["lon"]] for w in st.session_state.waypoints],
+            color="red",
+            weight=3,
+        ).add_to(m)
 
         num_waypoints = len(st.session_state.waypoints)
         for i, waypoint in enumerate(st.session_state.waypoints):
@@ -574,7 +579,13 @@ with col_map:
                 icon=folium.Icon(color=icon_color, icon=icon_name, prefix="fa"),
             ).add_to(m)
 
-        st_folium(m, width="100%", height=380, key="map_openaip_only", returned_objects=[])
+        st_folium(
+            m,
+            width="100%",
+            height=380,
+            key="map_openaip_only",
+            returned_objects=[],
+        )
 
 # =========================================================
 # NAV LOG + PROFILE
