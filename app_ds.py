@@ -24,7 +24,7 @@ OPENAIP_API_KEY = os.getenv("OPENAIP_API_KEY", "")
 MAP_STYLES = ["Carte Standard", "Carte aviation (openAIP)", "Satellite"]
 
 # ─── PAGE ───
-st.set_page_config(page_title="SkyAssistant V58.1", layout="wide")
+st.set_page_config(page_title="SkyAssistant V58.2", layout="wide")
 
 # ─── UI / UX V58 ───
 st.markdown(
@@ -451,12 +451,15 @@ with col_ctrl:
     st.caption(f"Route affichée : {fmt_hdg3(rv_in)}°")
     dist_in = st.number_input("Distance (NM)", 0.1, 300.0, 15.0, step=0.1)
     alt_in = st.number_input("Alt Croisière (ft)", 1000, 12500, 2500, step=500)
-    st.session_state.map_style = st.selectbox(
+    _new_style = st.selectbox(
         "Fond de carte",
         MAP_STYLES,
         index=MAP_STYLES.index(st.session_state.map_style),
         key="map_style_select",
     )
+    if _new_style != st.session_state.map_style:
+        st.session_state.map_style = _new_style
+        st.rerun()
     use_auto = st.toggle("Vent Auto", True)
     m_wind = None
     if not use_auto:
@@ -553,8 +556,9 @@ with col_map:
                 icon_c, icon_t = "orange", "circle"
             folium.Marker([w["lat"], w["lon"]], popup=f"{w['name']}", icon=folium.Icon(color=icon_c, icon=icon_t, prefix="fa")).add_to(m)
 
-        folium.LayerControl().add_to(m)
-        st_folium(m, width="100%", height=380, key="map_v58_1", returned_objects=[])
+        folium.LayerControl(collapsed=False).add_to(m)
+        map_key = f"map_{st.session_state.map_style.replace(' ', '_')}"
+        st_folium(m, width="100%", height=380, key=map_key, returned_objects=[])
 
 # ─── LOG + PROFIL ───
 if len(st.session_state.waypoints) > 1:
