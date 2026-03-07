@@ -25,12 +25,10 @@ HTTP_TIMEOUT = 8
 ARRIVAL_METAR_RADIUS_NM = 15.0
 OPENAIP_API_KEY = os.getenv("OPENAIP_API_KEY", "")
 
-OPENAIP_DEFAULT_ONLY = bool(OPENAIP_API_KEY)
-
 st.set_page_config(page_title="SkyAssistant V58.6", layout="wide")
 
 # =========================================================
-# CSS MINIMAL ET STABLE
+# CSS
 # =========================================================
 st.markdown(
     """
@@ -39,7 +37,6 @@ div[data-testid="stDataFrame"] [data-testid="stElementToolbar"],
 div[data-testid="stDataEditor"] [data-testid="stElementToolbar"] {
     display: none !important;
 }
-
 .sa-card {
     border: 1px solid rgba(255,255,255,0.08);
     border-radius: 14px;
@@ -47,12 +44,10 @@ div[data-testid="stDataEditor"] [data-testid="stElementToolbar"] {
     background: rgba(255,255,255,0.02);
     margin-bottom: 0.75rem;
 }
-
 .sa-card h4 {
     margin: 0 0 0.35rem 0;
     font-size: 0.95rem;
 }
-
 .sa-card p {
     margin: 0;
     opacity: 0.95;
@@ -60,7 +55,6 @@ div[data-testid="stDataEditor"] [data-testid="stElementToolbar"] {
     white-space: pre-wrap;
     word-break: break-word;
 }
-
 .sa-divider {
     margin-top: 0;
     margin-bottom: 0.6rem;
@@ -77,7 +71,7 @@ div[data-testid="stDataEditor"] [data-testid="stElementToolbar"] {
 @st.cache_resource
 def get_http_session():
     session = requests.Session()
-    session.headers.update({"User-Agent": "SkyAssistant/58.5"})
+    session.headers.update({"User-Agent": "SkyAssistant/58.6"})
     return session
 
 
@@ -103,9 +97,11 @@ def load_airports():
             "https://ourairports.com/data/airports.csv",
             usecols=["ident", "name", "latitude_deg", "longitude_deg", "iso_country", "type"],
         )
-        fr = df[(df["iso_country"] == "FR") & (df["type"].isin(["large_airport", "medium_airport", "small_airport"]))]
+        fr = df[
+            (df["iso_country"] == "FR")
+            & (df["type"].isin(["large_airport", "medium_airport", "small_airport"]))
+        ]
         fr = fr[fr["ident"].astype(str).str.match(r"^LF[A-Z0-9]{2}$")]
-
         downloaded = {
             row.ident: {
                 "name": row.name,
@@ -122,6 +118,7 @@ def load_airports():
 
 AIRPORTS = load_airports()
 ICAO_LF_RE = re.compile(r"^LF[A-Z0-9]{2}$")
+
 
 # =========================================================
 # HELPERS
@@ -217,6 +214,7 @@ def get_arrival_metar_candidate(waypoints, dep_icao: str):
     if candidate["icao"] == dep_icao:
         return None
     return {"icao": candidate["icao"], "name": candidate["name"], "label": "METAR arrivée"}
+
 
 # =========================================================
 # DATA FETCHERS
@@ -362,6 +360,7 @@ def get_wind_v27_final(lat, lon, alt_ft, time_dt, manual_wind=None, wx_refresh: 
     except Exception:
         return 0.0, 0.0, "Err"
 
+
 # =========================================================
 # PDF
 # =========================================================
@@ -401,11 +400,59 @@ def create_pdf(df_nav, metar_text):
         return bytes(out)
     return out.encode("latin-1", "ignore")
 
+
+# =========================================================
+# MAP BUILDER
+# =========================================================
+def build_map(waypoints: list) -> folium.Map:
+    center = [waypoints[0]["lat"], waypoints[0]["lon"]]
+
+    if OPENAIP_API_KEY:
+        # OSM comme fond, OpenAIP en overlay par-dessus
+        m = folium.Map(location=center, zoom_start=9, control_scale=True, tiles="openstreetmap")
+        folium.TileLayer(
+            tiles=f"https://api.tiles.openaip.net/api/data/openaip/{{z}}/{{x}}/{{y}}.png?apiKey={OPENAIP_API_KEY}",
+            attr='<a href="https://www.openaip.net/">openAIP</a>',
+            name="Données aviation (openAIP)",
+            overlay=True,
+            control=True,
+            opacity=1.0,
+        ).add_to(m)
+        folium.LayerControl(collapsed=False).add_to(m)
+    else:
+        m = folium.Map(location=center, zoom_start=9, control_scale=True, tiles="openstreetmap")
+
+    # Tracé de la route
+    folium.PolyLine(
+        [[w["lat"], w["lon"]] for w in waypoints],
+        color="red",
+        weight=3,
+    ).add_to(m)
+
+    # Marqueurs
+    num_waypoints = len(waypoints)
+    for i, waypoint in enumerate(waypoints):
+        if i == 0:
+            icon_color, icon_name = "blue", "plane"
+        elif i == num_waypoints - 1:
+            icon_color, icon_name = "red", "flag"
+        else:
+            icon_color, icon_name = "orange", "circle"
+
+        folium.Marker(
+            [waypoint["lat"], waypoint["lon"]],
+            popup=waypoint["name"],
+            icon=folium.Icon(color=icon_color, icon=icon_name, prefix="fa"),
+        ).add_to(m)
+
+    return m
+
+
 # =========================================================
 # SIDEBAR
 # =========================================================
 with st.sidebar:
-    st.title("✈️ SkyAssistant V58.5")
+    st.title("✈️ SkyAssistant V58.6")
 
     if st.button("🔄 Rafraîchir météo", use_container_width=True):
         st.session_state.wx_refresh += 1
@@ -449,6 +496,7 @@ with st.sidebar:
         st.session_state.waypoints = []
         st.rerun()
 
+
 # =========================================================
 # TOP CONTAINERS
 # =========================================================
@@ -484,9 +532,13 @@ if st.session_state.waypoints:
                     unsafe_allow_html=True,
                 )
             else:
-                st.markdown('<div class="sa-card"><h4>Arrivée</h4><p>Aucun METAR distinct à afficher.</p></div>', unsafe_allow_html=True)
+                st.markdown(
+                    '<div class="sa-card"><h4>Arrivée</h4><p>Aucun METAR distinct à afficher.</p></div>',
+                    unsafe_allow_html=True,
+                )
         with st.expander(f"📄 TAF départ — {dep_icao}", expanded=False):
             st.code(taf_val, language="text")
+
 
 # =========================================================
 # MAP + CONTROLS
@@ -533,59 +585,10 @@ with col_ctrl:
         st.rerun()
 
 with col_map:
- if st.session_state.waypoints:
-        m = folium.Map(
-            location=[st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"]],
-            zoom_start=9,
-            control_scale=True,
-            tiles=None,
-        )
+    if st.session_state.waypoints:
+        m = build_map(st.session_state.waypoints)
+        st_folium(m, width="100%", height=380, key="map_main", returned_objects=[])
 
-        if OPENAIP_API_KEY:
-            folium.TileLayer(
-                tiles=f"https://a.api.tiles.openaip.net/api/data/openaip/{{z}}/{{x}}/{{y}}.png?apiKey={OPENAIP_API_KEY}",
-                attr="openAIP",
-                name="Carte aviation (openAIP)",
-                overlay=False,
-                control=False,
-                tms=False,
-            ).add_to(m)
-        else:
-            folium.TileLayer(
-                "openstreetmap",
-                name="Carte Standard",
-                overlay=False,
-                control=False,
-            ).add_to(m)
-
-        folium.PolyLine(
-            [[w["lat"], w["lon"]] for w in st.session_state.waypoints],
-            color="red",
-            weight=3,
-        ).add_to(m)
-
-        num_waypoints = len(st.session_state.waypoints)
-        for i, waypoint in enumerate(st.session_state.waypoints):
-            if i == 0:
-                icon_color, icon_name = "blue", "plane"
-            elif i == num_waypoints - 1:
-                icon_color, icon_name = "red", "flag"
-            else:
-                icon_color, icon_name = "orange", "circle"
-
-            folium.Marker(
-                [waypoint["lat"], waypoint["lon"]],
-                popup=f"{waypoint['name']}",
-                icon=folium.Icon(color=icon_color, icon=icon_name, prefix="fa"),
-            ).add_to(m)
-
-        st_folium(
-            m,
-            width="100%",
-            height=380,
-            key="map_openaip_only",
-            returned_objects=[],
-        )
 
 # =========================================================
 # NAV LOG + PROFILE
@@ -599,7 +602,9 @@ if len(st.session_state.waypoints) > 1:
     dist_profile = [0.0]
     elev0 = float(st.session_state.waypoints[0].get("elev", 0))
     if elev0 <= 0:
-        elev_try = get_elevation_ft(st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"])
+        elev_try = get_elevation_ft(
+            st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"]
+        )
         if elev_try > 0:
             elev0 = float(elev_try)
             st.session_state.waypoints[0]["elev"] = elev0
@@ -653,7 +658,9 @@ if len(st.session_state.waypoints) > 1:
             if decl_key in decl_local_cache:
                 decl = decl_local_cache[decl_key]
             else:
-                future_decl = executor.submit(get_declination_deg, float(w2["lat"]), float(w2["lon"]), dep_dt)
+                future_decl = executor.submit(
+                    get_declination_deg, float(w2["lat"]), float(w2["lon"]), dep_dt
+                )
 
             if future_elev is not None:
                 elev_try = future_elev.result()
@@ -695,7 +702,13 @@ if len(st.session_state.waypoints) > 1:
                     dist_profile.append(x_toc)
                     alt_profile.append(alt_ft)
                     terr_profile.append(float(w1.get("elev", 0)))
-                    fig.add_annotation(x=x_toc, y=alt_ft, text=f"TOC {round(d_climb,1)}NM ({t_cl_str})", showarrow=True, ay=45)
+                    fig.add_annotation(
+                        x=x_toc,
+                        y=alt_ft,
+                        text=f"TOC {round(d_climb,1)}NM ({t_cl_str})",
+                        showarrow=True,
+                        ay=45,
+                    )
 
         arrival_type = w2.get("arr_type", "Direct")
         if (i == len(st.session_state.waypoints) - 1) and arrival_type == "Direct":
@@ -703,7 +716,11 @@ if len(st.session_state.waypoints) > 1:
 
         if arrival_type != "Direct":
             alt_target = elev2 + (1500 if "VT" in arrival_type else 1000)
-            t_desc = ((alt_ft - alt_target) / max(1e-9, float(v_descent))) * 60.0 if alt_ft > alt_target else 0.0
+            t_desc = (
+                ((alt_ft - alt_target) / max(1e-9, float(v_descent))) * 60.0
+                if alt_ft > alt_target
+                else 0.0
+            )
             d_desc = gs * (t_desc / 3600.0)
             if d_desc > 0.1:
                 t_de_str = f"{int(t_desc//60):02d}:{int(t_desc%60):02d}"
@@ -713,7 +730,13 @@ if len(st.session_state.waypoints) > 1:
                     dist_profile.append(x_tod)
                     alt_profile.append(alt_ft)
                     terr_profile.append(elev2)
-                    fig.add_annotation(x=x_tod, y=alt_ft, text=f"TOD {round(d_desc,1)}NM ({t_de_str})", showarrow=True, ay=-45)
+                    fig.add_annotation(
+                        x=x_tod,
+                        y=alt_ft,
+                        text=f"TOD {round(d_desc,1)}NM ({t_de_str})",
+                        showarrow=True,
+                        ay=-45,
+                    )
 
             label_dest = "VT" if "VT" in arrival_type else "TDP"
             fig.add_annotation(
@@ -784,7 +807,9 @@ if len(st.session_state.waypoints) > 1:
             "Fuel": st.column_config.TextColumn("Fuel", width="small", disabled=True),
             "ETA": st.column_config.TextColumn("ETA", width="small", disabled=True),
             "TOC/TOD": st.column_config.TextColumn("TOC/TOD", width="medium", disabled=True),
-            "Arrivée": st.column_config.SelectboxColumn("Arrivée", options=["Direct", "TDP (1000ft)", "VT (1500ft)"], width="small"),
+            "Arrivée": st.column_config.SelectboxColumn(
+                "Arrivée", options=["Direct", "TDP (1000ft)", "VT (1500ft)"], width="small"
+            ),
             "❌": st.column_config.CheckboxColumn("❌", width="small"),
             "_idx": None,
         },
@@ -795,7 +820,7 @@ if len(st.session_state.waypoints) > 1:
         new_waypoints = [st.session_state.waypoints[0]]
         for _, row in edited_log.iterrows():
             if not row["❌"]:
-                wp = st.session_state.waypoints[int(row["_idx"])] .copy()
+                wp = st.session_state.waypoints[int(row["_idx"])].copy()
                 wp["arr_type"] = row["Arrivée"]
                 branch_txt = str(row["Branche"])
                 if "➔" in branch_txt:
@@ -815,7 +840,9 @@ if len(st.session_state.waypoints) > 1:
     )
 
     fig.add_trace(go.Scatter(x=dist_profile, y=terr_profile, fill="tozeroy", name="Relief", line_color="sienna"))
-    fig.add_trace(go.Scatter(x=dist_profile, y=alt_profile, name="Profil Avion", line=dict(color="royalblue", width=4)))
+    fig.add_trace(
+        go.Scatter(x=dist_profile, y=alt_profile, name="Profil Avion", line=dict(color="royalblue", width=4))
+    )
     fig.update_layout(
         width=1000,
         height=350,
