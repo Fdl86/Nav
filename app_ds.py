@@ -604,6 +604,7 @@ with col_map:
 
         st_folium(
             m,
+            width=None,
             height=380,
             key="map_v59_stateful",
             returned_objects=[],
