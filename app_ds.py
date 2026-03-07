@@ -24,9 +24,9 @@ OPENAIP_API_KEY = os.getenv("OPENAIP_API_KEY", "")
 MAP_STYLES = ["Carte Standard", "Carte aviation (openAIP)", "Satellite"]
 
 # ─── PAGE ───
-st.set_page_config(page_title="SkyAssistant V58.1", layout="wide")
+st.set_page_config(page_title="SkyAssistant V58.2", layout="wide")
 
-# ─── UI / UX V58 ───
+# ─── UI / UX V58.2 ───
 st.markdown(
     """
 <style>
@@ -76,7 +76,7 @@ div[data-testid="stDataEditor"] [data-testid="stElementToolbar"] {
 @st.cache_resource
 def get_http_session():
     s = requests.Session()
-    s.headers.update({"User-Agent": "SkyAssistant/58.1"})
+    s.headers.update({"User-Agent": "SkyAssistant/58.2"})
     return s
 
 SESSION = get_http_session()
@@ -86,8 +86,10 @@ if "waypoints" not in st.session_state:
     st.session_state.waypoints = []
 if "wx_refresh" not in st.session_state:
     st.session_state.wx_refresh = 0
+
+# Streamlit mémorise automatiquement la valeur grâce à la key du selectbox.
 if "map_style" not in st.session_state:
-    st.session_state.map_style = "Carte aviation (openAIP)"
+    st.session_state.map_style = "Carte Standard"
 
 # ─── AIRPORTS ───
 @st.cache_data(ttl=86400)
@@ -317,9 +319,8 @@ def get_wind_v27_final(lat, lon, alt_ft, time_dt, manual_wind=None, wx_refresh: 
         if not wd_arr or not ws_arr:
             return 0.0, 0.0, "Err"
 
-        t_target = time_dt.timestamp()
-
         # OPTIMISÉ : recherche temporelle en O(log n) via bisect sur timestamps pré-convertis
+        t_target = time_dt.timestamp()
         timestamps = [dt.datetime.fromisoformat(t).replace(tzinfo=dt.timezone.utc).timestamp() for t in times]
         pos = bisect_left(timestamps, t_target)
         if pos <= 0:
@@ -372,7 +373,7 @@ def create_pdf(df_nav, metar_text):
 
 # ─── SIDEBAR ───
 with st.sidebar:
-    st.title("✈️ SkyAssistant V58.1")
+    st.title("✈️ SkyAssistant V58.2")
     if st.button("🔄 Rafraîchir météo", use_container_width=True):
         st.session_state.wx_refresh += 1
         st.rerun()
@@ -451,6 +452,13 @@ with col_ctrl:
     st.caption(f"Route affichée : {fmt_hdg3(rv_in)}°")
     dist_in = st.number_input("Distance (NM)", 0.1, 300.0, 15.0, step=0.1)
     alt_in = st.number_input("Alt Croisière (ft)", 1000, 12500, 2500, step=500)
+
+    st.session_state.map_style = st.selectbox(
+        "Fond de carte",
+        MAP_STYLES,
+        key="map_style",
+    )
+
     use_auto = st.toggle("Vent Auto", True)
     m_wind = None
     if not use_auto:
@@ -489,45 +497,40 @@ with col_map:
             tiles=None,
         )
 
-        active = st.session_state.map_style
+        selected_style = st.session_state.map_style
 
-        def add_osm(layer_name="Carte Standard"):
+        folium.TileLayer(
+            "openstreetmap",
+            name="Carte Standard",
+            overlay=False,
+            control=True,
+            show=(selected_style == "Carte Standard"),
+        ).add_to(m)
+
+        if OPENAIP_API_KEY:
             folium.TileLayer(
-                "openstreetmap",
-                name=layer_name,
+                tiles=f"https://api.tiles.openaip.net/api/data/openaip/{{z}}/{{x}}/{{y}}.png?apiKey={OPENAIP_API_KEY}",
+                attr="openAIP",
+                name="Carte aviation (openAIP)",
                 overlay=False,
                 control=True,
-                show=(active == layer_name),
+                show=(selected_style == "Carte aviation (openAIP)"),
             ).add_to(m)
 
-        def add_sat(layer_name="Satellite"):
-            folium.TileLayer(
-                tiles="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
-                attr="Google Satellite",
-                name=layer_name,
-                overlay=False,
-                control=True,
-                show=(active == layer_name),
-            ).add_to(m)
+        folium.TileLayer(
+            tiles="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
+            attr="Google Satellite",
+            name="Satellite",
+            overlay=False,
+            control=True,
+            show=(selected_style == "Satellite"),
+        ).add_to(m)
 
-        def add_openaip(layer_name="Carte aviation (openAIP)"):
-            if OPENAIP_API_KEY:
-                folium.TileLayer(
-                    tiles=f"https://api.tiles.openaip.net/api/data/openaip/{{z}}/{{x}}/{{y}}.png?apiKey={OPENAIP_API_KEY}",
-                    attr="openAIP",
-                    name=layer_name,
-                    overlay=False,
-                    control=True,
-                    show=(active == layer_name),
-                ).add_to(m)
-            else:
-                add_osm(layer_name)
-
-        add_osm()
-        add_openaip()
-        add_sat()
-
-        folium.PolyLine([[w["lat"], w["lon"]] for w in st.session_state.waypoints], color="red", weight=3).add_to(m)
+        folium.PolyLine(
+            [[w["lat"], w["lon"]] for w in st.session_state.waypoints],
+            color="red",
+            weight=3,
+        ).add_to(m)
 
         num_w = len(st.session_state.waypoints)
         for i, w in enumerate(st.session_state.waypoints):
@@ -537,13 +540,25 @@ with col_map:
                 icon_c, icon_t = "red", "flag"
             else:
                 icon_c, icon_t = "orange", "circle"
-            folium.Marker([w["lat"], w["lon"]], popup=f"{w['name']}", icon=folium.Icon(color=icon_c, icon=icon_t, prefix="fa")).add_to(m)
+
+            folium.Marker(
+                [w["lat"], w["lon"]],
+                popup=f"{w['name']}",
+                icon=folium.Icon(color=icon_c, icon=icon_t, prefix="fa"),
+            ).add_to(m)
 
         folium.LayerControl().add_to(m)
-        map_data = st_folium(m, width="100%", height=380, key="map_v58_1", returned_objects=["active_layer_name"])
-        # Synchronise le layer actif choisi par l'utilisateur dans le LayerControl
-        if map_data and map_data.get("active_layer_name"):
-            st.session_state.map_style = map_data["active_layer_name"]
+
+        # Trick Streamlit : la clé ne dépend que du fond choisi.
+        map_key = f"map_{selected_style}"
+
+        st_folium(
+            m,
+            width="100%",
+            height=380,
+            key=map_key,
+            returned_objects=[],
+        )
 
 # ─── LOG + PROFIL ───
 if len(st.session_state.waypoints) > 1:
