@@ -32,18 +32,13 @@ st.set_page_config(page_title="SkyAssistant V58.3", layout="wide")
 st.markdown(
     """
 <style>
-h1, h2, h3, h4, h5, h6 {
-    line-height: 1.25 !important;
-    padding-top: 0.1rem !important;
-    padding-bottom: 0.1rem !important;
-}
-div[data-testid="stMarkdownContainer"] h1,
-div[data-testid="stMarkdownContainer"] h2,
-div[data-testid="stMarkdownContainer"] h3,
-div[data-testid="stMarkdownContainer"] h4,
-div[data-testid="stMarkdownContainer"] h5,
-div[data-testid="stMarkdownContainer"] h6 {
+div[data-testid="stMarkdownContainer"] {
     overflow: visible !important;
+}
+h1, h2, h3, h4, h5, h6 {
+    line-height: 1.3 !important;
+    margin-top: 0 !important;
+    margin-bottom: 0.35rem !important;
 }
 div[data-testid="stDataFrame"] [data-testid="stElementToolbar"],
 div[data-testid="stDataEditor"] [data-testid="stElementToolbar"] {
