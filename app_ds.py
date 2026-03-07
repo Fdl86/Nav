@@ -451,12 +451,6 @@ with col_ctrl:
     st.caption(f"Route affichée : {fmt_hdg3(rv_in)}°")
     dist_in = st.number_input("Distance (NM)", 0.1, 300.0, 15.0, step=0.1)
     alt_in = st.number_input("Alt Croisière (ft)", 1000, 12500, 2500, step=500)
-    st.session_state.map_style = st.selectbox(
-        "Fond de carte",
-        MAP_STYLES,
-        index=MAP_STYLES.index(st.session_state.map_style),
-        key="map_style_select",
-    )
     use_auto = st.toggle("Vent Auto", True)
     m_wind = None
     if not use_auto:
@@ -546,7 +540,10 @@ with col_map:
             folium.Marker([w["lat"], w["lon"]], popup=f"{w['name']}", icon=folium.Icon(color=icon_c, icon=icon_t, prefix="fa")).add_to(m)
 
         folium.LayerControl().add_to(m)
-        st_folium(m, width="100%", height=380, key="map_v58_1", returned_objects=[])
+        map_data = st_folium(m, width="100%", height=380, key="map_v58_1", returned_objects=["active_layer_name"])
+        # Synchronise le layer actif choisi par l'utilisateur dans le LayerControl
+        if map_data and map_data.get("active_layer_name"):
+            st.session_state.map_style = map_data["active_layer_name"]
 
 # ─── LOG + PROFIL ───
 if len(st.session_state.waypoints) > 1:
