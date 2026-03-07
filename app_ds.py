@@ -444,7 +444,7 @@ col_map, col_ctrl = st.columns([2, 1])
 
 with col_ctrl:
     if "map_style" not in st.session_state:
-    st.session_state.map_style = "Carte Standard"
+        st.session_state.map_style = "Carte Standard"
 
     st.session_state.map_style = st.selectbox(
         "Fond de carte",
