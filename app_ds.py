@@ -19,7 +19,7 @@ ELEVATION_URL = "https://api.open-meteo.com/v1/elevation"
 NOAA_DECL_URL = "https://www.ngdc.noaa.gov/geomag-web/calculators/calculateDeclination"
 PRESSURE_MAP = {1000: 975, 1500: 960, 2000: 950, 2500: 925, 3000: 900, 5000: 850, 7000: 750}
 HTTP_TIMEOUT = 8
-ARRIVAL_METAR_RADIUS_NM = 5.0
+ARRIVAL_METAR_RADIUS_NM = 15.0
 
 # ─── PAGE ───
 APP_VERSION = "59.1-openAIP-satellite"
@@ -556,31 +556,25 @@ with col_ctrl:
             "elev": elev2,
             "arr_type": "Direct",
         })
-        st.session_state.map_center = [la2, lo2]
         st.rerun()
 
 with col_map:
     if st.session_state.waypoints:
-        center = st.session_state.map_center
-        zoom = st.session_state.map_zoom
-    else:
-        center = [46.5, 2.5]
-        zoom = 6
-    
+        if st.session_state.map_style == "openAIP" and not OPENAIP_API_KEY:
+            st.warning("OPENAIP_API_KEY manquante : openAIP indisponible. Bascule sur Satellite ou configure la clé.")
         m = build_map(
             st.session_state.waypoints,
             st.session_state.map_style,
-            center=center,
-            zoom=zoom,
+            center=st.session_state.map_center,
+            zoom=st.session_state.map_zoom,
         )
-    
-        st_folium(
-            m,
-            height=380,
-            key="map_v59_stateful",
-            returned_objects=[]
-        )
-
+    st_folium(
+        m,
+        width="100%",
+        height=380,
+        key="map_v59_stateful",
+        returned_objects=[]
+    )
 # ─── LOG + PROFIL ───
 if len(st.session_state.waypoints) > 1:
     st.markdown("---")
@@ -774,37 +768,19 @@ if len(st.session_state.waypoints) > 1:
     )
 
     if edited_log.to_dict("records") != df_screen.to_dict("records"):
-        old_records = df_screen.to_dict("records")
-        new_records = edited_log.to_dict("records")
-    
-        structure_changed = False
-        rename_only = False
-    
-        for old_row, new_row in zip(old_records, new_records):
-            if old_row["❌"] != new_row["❌"] or old_row["Arrivée"] != new_row["Arrivée"]:
-                structure_changed = True
-                break
-            if old_row["Branche"] != new_row["Branche"]:
-                rename_only = True
-    
         new_wps = [st.session_state.waypoints[0]]
         for _, row in edited_log.iterrows():
             if not row["❌"]:
                 wp = st.session_state.waypoints[int(row["_idx"])].copy()
                 wp["arr_type"] = row["Arrivée"]
-    
                 branche_txt = str(row["Branche"])
                 if "➔" in branche_txt:
                     wp["name"] = branche_txt.split("➔", 1)[1].strip()
                 elif "->" in branche_txt:
                     wp["name"] = branche_txt.split("->", 1)[1].strip()
-    
                 new_wps.append(wp)
-    
         st.session_state.waypoints = new_wps
-    
-        if structure_changed:
-            st.rerun()
+        st.rerun()
 
     df_pdf = df_nav[["Branche", "Vent", "GS", "EET", "Fuel", "TOC/TOD", "Arrivée"]].copy()
     st.download_button(label="📥 Log PDF", data=create_pdf(df_pdf, metar_val), file_name="nav_log.pdf", use_container_width=True)
