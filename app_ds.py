@@ -21,15 +21,48 @@ HTTP_TIMEOUT = 8
 ARRIVAL_METAR_RADIUS_NM = 15.0
 
 # ─── PAGE ───
-st.set_page_config(page_title="SkyAssistant V57.1", layout="wide")
+st.set_page_config(page_title="SkyAssistant V58", layout="wide")
 
-# ─── HIDE STREAMLIT DATAFRAME TOOLBAR ───
+# ─── UI / UX V58 ───
 st.markdown(
     """
 <style>
 div[data-testid="stDataFrame"] [data-testid="stElementToolbar"],
 div[data-testid="stDataEditor"] [data-testid="stElementToolbar"] {
     display: none !important;
+}
+
+.block-container {
+    padding-top: 1.1rem;
+    padding-bottom: 1.5rem;
+}
+
+.sa-card {
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 14px;
+    padding: 14px 16px;
+    background: rgba(255,255,255,0.02);
+    margin-bottom: 0.75rem;
+}
+
+.sa-card h4 {
+    margin: 0 0 0.35rem 0;
+    font-size: 0.95rem;
+}
+
+.sa-card p {
+    margin: 0;
+    opacity: 0.95;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.sa-section {
+    margin-top: 0.2rem;
+    margin-bottom: 0.5rem;
+    padding-bottom: 0.2rem;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
 }
 </style>
 """,
@@ -40,7 +73,7 @@ div[data-testid="stDataEditor"] [data-testid="stElementToolbar"] {
 @st.cache_resource
 def get_http_session():
     s = requests.Session()
-    s.headers.update({"User-Agent": "SkyAssistant/57.1"})
+    s.headers.update({"User-Agent": "SkyAssistant/58"})
     return s
 
 SESSION = get_http_session()
@@ -62,7 +95,8 @@ def load_airports():
         )
         fr = df[(df["iso_country"] == "FR") & (df["type"].isin(["large_airport", "medium_airport", "small_airport"]))]
         fr = fr[fr["ident"].astype(str).str.match(r"^LF[A-Z0-9]{2}$")]
-                # OPTIMISÉ : itertuples() est nettement plus rapide que iterrows()
+
+        # OPTIMISÉ : itertuples() est nettement plus rapide que iterrows()
         downloaded = {
             row.ident: {"name": row.name, "lat": float(row.latitude_deg), "lon": float(row.longitude_deg)}
             for row in fr.itertuples(index=False)
@@ -296,41 +330,6 @@ def get_wind_v27_final(lat, lon, alt_ft, time_dt, manual_wind=None, wx_refresh: 
     except Exception:
         return 0.0, 0.0, "Err"
 
-        def pick_model(prefix: str):
-            ws = h.get(f"wind_speed_{lv}hPa_{prefix}")
-            wd = h.get(f"wind_direction_{lv}hPa_{prefix}")
-            if ws and wd and ws[0] is not None and wd[0] is not None:
-                return wd, ws
-            return None
-
-        picked = pick_model("icon_d2")
-        if picked:
-            wd_arr, ws_arr, src = picked[0], picked[1], "ICON-D2"
-        else:
-            picked = pick_model("meteofrance_arome_france_hd")
-            if picked:
-                wd_arr, ws_arr, src = picked[0], picked[1], "AROME"
-            else:
-                wd_arr = h.get(f"wind_direction_{lv}hPa_gfs_seamless", [])
-                ws_arr = h.get(f"wind_speed_{lv}hPa_gfs_seamless", [])
-                src = "GFS"
-
-        if not wd_arr or not ws_arr:
-            return 0.0, 0.0, "Err"
-
-        t_target = time_dt.timestamp()
-        best_i = 0
-        best_d = float("inf")
-        for i, t in enumerate(times):
-            ts = dt.datetime.fromisoformat(t).replace(tzinfo=dt.timezone.utc).timestamp()
-            d = abs(ts - t_target)
-            if d < best_d:
-                best_d = d
-                best_i = i
-        return float(wd_arr[best_i]), float(ws_arr[best_i]), src
-    except Exception:
-        return 0.0, 0.0, "Err"
-
 # ─── PDF ───
 def create_pdf(df_nav, metar_text):
     pdf = FPDF(orientation="P", unit="mm", format="A4")
@@ -347,7 +346,7 @@ def create_pdf(df_nav, metar_text):
     cols = ["Branche", "Vent", "GS", "EET", "Fuel", "TOC/TOD", "Arrivée"]
     pdf.set_font("helvetica", "B", 8)
     pdf.set_fill_color(220, 220, 220)
-        # OPTIMISÉ : zip() évite l'indexation manuelle répétée
+    # OPTIMISÉ : zip() évite l'indexation manuelle répétée
     for col, width in zip(cols, w):
         pdf.cell(width, 8, col, border=1, fill=True, align="C")
     pdf.ln()
@@ -368,7 +367,7 @@ def create_pdf(df_nav, metar_text):
 
 # ─── SIDEBAR ───
 with st.sidebar:
-    st.title("✈️ SkyAssistant V57.1")
+    st.title("✈️ SkyAssistant V58")
     if st.button("🔄 Rafraîchir météo", use_container_width=True):
         st.session_state.wx_refresh += 1
         st.rerun()
@@ -425,16 +424,16 @@ if st.session_state.waypoints:
     arr_candidate = get_arrival_metar_candidate(st.session_state.waypoints, dep_icao)
 
     with weather_placeholder.container():
-        st.markdown("### 🌦️ Météo")
+        st.markdown('<div class="sa-section"><h3 style="margin-bottom:0.2rem;">🌦️ Météo</h3></div>', unsafe_allow_html=True)
         col_wx1, col_wx2 = st.columns(2)
         with col_wx1:
-            st.caption(f"Départ — {dep_name} ({dep_icao})")
-            st.code(metar_val, language="text")
+            st.markdown(f'<div class="sa-card"><h4>Départ — {dep_name} ({dep_icao})</h4><p>{metar_val}</p></div>', unsafe_allow_html=True)
         with col_wx2:
             if arr_candidate:
                 arr_metar = get_metar_cached(arr_candidate["icao"], st.session_state.wx_refresh)
-                st.caption(f"{arr_candidate['label']} — {arr_candidate['name']} ({arr_candidate['icao']})")
-                st.code(arr_metar, language="text")
+                st.markdown(f'<div class="sa-card"><h4>{arr_candidate["label"]} — {arr_candidate["name"]} ({arr_candidate["icao"]})</h4><p>{arr_metar}</p></div>', unsafe_allow_html=True)
+            else:
+                st.markdown('<div class="sa-card"><h4>Arrivée</h4><p>Aucun METAR distinct à afficher.</p></div>', unsafe_allow_html=True)
         with st.expander(f"📄 TAF départ — {dep_icao}", expanded=False):
             st.code(taf_val, language="text")
 
@@ -442,7 +441,7 @@ if st.session_state.waypoints:
 col_map, col_ctrl = st.columns([2, 1])
 
 with col_ctrl:
-    st.subheader("📍 Ajouter Segment")
+    st.markdown('<div class="sa-section"><h3 style="margin-bottom:0.2rem;">📍 Ajouter Segment</h3></div>', unsafe_allow_html=True)
     rv_in = st.number_input("Route Vraie (Rv) °", 0, 359, 0, step=1)
     st.caption(f"Route affichée : {fmt_hdg3(rv_in)}°")
     dist_in = st.number_input("Distance (NM)", 0.1, 300.0, 15.0, step=0.1)
@@ -494,7 +493,7 @@ with col_map:
             folium.Marker([w["lat"], w["lon"]], popup=f"{w['name']}", icon=folium.Icon(color=icon_c, icon=icon_t, prefix="fa")).add_to(m)
 
         folium.LayerControl().add_to(m)
-        st_folium(m, width="100%", height=320, key="map_v56_1", returned_objects=[])
+        st_folium(m, width="100%", height=380, key="map_v58", returned_objects=[])
 
 # ─── LOG + PROFIL ───
 if len(st.session_state.waypoints) > 1:
@@ -580,7 +579,6 @@ if len(st.session_state.waypoints) > 1:
         wca = math.degrees(math.asin(sin_wca)) if abs(sin_wca) <= 1 else 0.0
         cap_vrai = norm360(rv + wca)
         gs = max(20.0, (float(tas) * math.cos(math.radians(wca))) - (ws * math.cos(wa)))
-
         cap_mag = norm360(cap_vrai - decl)
 
         hours = dist_nm / max(1e-9, gs)
@@ -641,7 +639,7 @@ if len(st.session_state.waypoints) > 1:
             current_alt = alt_ft
 
         drift_txt = f"{wca:+.0f}°"
-        cap_txt = f"{fmt_deg(cap_mag)} ({drift_txt})"
+        cap_txt = f"{fmt_hdg3(cap_mag)} ({drift_txt})"
         nav_data.append({
             "Branche": f"{w1['name']}➔{w2['name']}",
             "Vent": f"{int(wd)}/{int(ws)}kt ({src})",
@@ -659,8 +657,7 @@ if len(st.session_state.waypoints) > 1:
     df_nav = pd.DataFrame(nav_data)
 
     with mission_placeholder.container():
-        st.markdown("### 🧭 Mission")
-        st.caption("V57.1 — mise en page compacte et log optimisé")
+        st.markdown('<div class="sa-section"><h3 style="margin-bottom:0.2rem;">🧭 Mission</h3></div>', unsafe_allow_html=True)
         card = st.container(border=True)
         with card:
             st.caption(summarize_route_names(st.session_state.waypoints))
@@ -670,7 +667,7 @@ if len(st.session_state.waypoints) > 1:
             m3.metric("Carburant total", f"{fuel_total:.1f} L")
             m4.metric("ETA arrivée", df_nav.iloc[-1]["ETA"] if len(df_nav) else "--:--")
 
-    st.subheader("📋 Log de Navigation")
+    st.markdown('<div class="sa-section"><h3 style="margin-bottom:0.2rem;">📋 Log de Navigation</h3></div>', unsafe_allow_html=True)
     df_screen = df_nav[["Branche", "Cap", "Vent", "GS", "EET", "Fuel", "ETA", "TOC/TOD", "Arrivée", "❌", "_idx"]].copy()
     edited_log = st.data_editor(
         df_screen,
@@ -718,6 +715,7 @@ if len(st.session_state.waypoints) > 1:
         margin=dict(l=40, r=40, t=20, b=40),
         showlegend=False,
     )
-    st.markdown('<div style="overflow-x: auto; width: 100%; border: 1px solid #444; border-radius: 10px;">', unsafe_allow_html=True)
+    st.markdown('<div class="sa-section"><h3 style="margin-bottom:0.4rem;">📈 Profil vertical</h3></div>', unsafe_allow_html=True)
+    st.markdown('<div style="overflow-x: auto; width: 100%; border: 1px solid #444; border-radius: 12px; padding-top: 6px;">', unsafe_allow_html=True)
     st.plotly_chart(fig, use_container_width=False, config={"staticPlot": True, "displayModeBar": False})
     st.markdown("</div>", unsafe_allow_html=True)
