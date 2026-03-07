@@ -82,10 +82,8 @@ if "waypoints" not in st.session_state:
     st.session_state.waypoints = []
 if "wx_refresh" not in st.session_state:
     st.session_state.wx_refresh = 0
-if "map_style" not in st.session_state:
-    st.session_state.map_style = "Carte aviation (openAIP)" if OPENAIP_API_KEY else "Carte Standard"
-if "map_style_widget" not in st.session_state:
-    st.session_state.map_style_widget = st.session_state.map_style
+if "map_style_radio" not in st.session_state:
+    st.session_state.map_style_radio = "Carte aviation (openAIP)" if OPENAIP_API_KEY else "Carte Standard"
 
 # ─── AIRPORTS ───
 @st.cache_data(ttl=86400)
@@ -480,20 +478,15 @@ with col_ctrl:
         st.rerun()
 
 with col_map:
-    if st.session_state.waypoints:
-        current_index = MAP_STYLES.index(st.session_state.map_style)
-
-        selected_style = st.radio(
+ if st.session_state.waypoints:
+        st.radio(
             "Fond de carte",
             MAP_STYLES,
-            index=current_index,
             horizontal=True,
             key="map_style_radio",
         )
 
-        if selected_style != st.session_state.map_style:
-            st.session_state.map_style = selected_style
-            st.rerun()
+        selected_style = st.session_state.map_style_radio
 
         m = folium.Map(
             location=[st.session_state.waypoints[0]["lat"], st.session_state.waypoints[0]["lon"]],
@@ -502,7 +495,7 @@ with col_map:
             tiles=None,
         )
 
-        if st.session_state.map_style == "Carte aviation (openAIP)" and OPENAIP_API_KEY:
+        if selected_style == "Carte aviation (openAIP)" and OPENAIP_API_KEY:
             folium.TileLayer(
                 tiles=f"https://api.tiles.openaip.net/api/data/openaip/{{z}}/{{x}}/{{y}}.png?apiKey={OPENAIP_API_KEY}",
                 attr="openAIP",
@@ -511,7 +504,7 @@ with col_map:
                 control=False,
             ).add_to(m)
 
-        elif st.session_state.map_style == "Satellite":
+        elif selected_style == "Satellite":
             folium.TileLayer(
                 tiles="https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}",
                 attr="Google Satellite",
@@ -553,7 +546,7 @@ with col_map:
             m,
             width="100%",
             height=380,
-            key=f"map_{st.session_state.map_style}",
+            key=f"map_{selected_style}",
             returned_objects=[],
         )
 
