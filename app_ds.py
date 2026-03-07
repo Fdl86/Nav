@@ -556,6 +556,7 @@ with col_ctrl:
             "elev": elev2,
             "arr_type": "Direct",
         })
+        st.session_state.map_center = [la2, lo2]
         st.rerun()
 
 with col_map:
@@ -769,18 +770,36 @@ if len(st.session_state.waypoints) > 1:
     )
 
     if edited_log.to_dict("records") != df_screen.to_dict("records"):
-        new_wps = [st.session_state.waypoints[0]]
-        for _, row in edited_log.iterrows():
-            if not row["❌"]:
-                wp = st.session_state.waypoints[int(row["_idx"])].copy()
-                wp["arr_type"] = row["Arrivée"]
-                branche_txt = str(row["Branche"])
-                if "➔" in branche_txt:
-                    wp["name"] = branche_txt.split("➔", 1)[1].strip()
-                elif "->" in branche_txt:
-                    wp["name"] = branche_txt.split("->", 1)[1].strip()
-                new_wps.append(wp)
-        st.session_state.waypoints = new_wps
+    old_records = df_screen.to_dict("records")
+    new_records = edited_log.to_dict("records")
+
+    structure_changed = False
+    rename_only = False
+
+    for old_row, new_row in zip(old_records, new_records):
+        if old_row["❌"] != new_row["❌"] or old_row["Arrivée"] != new_row["Arrivée"]:
+            structure_changed = True
+            break
+        if old_row["Branche"] != new_row["Branche"]:
+            rename_only = True
+
+    new_wps = [st.session_state.waypoints[0]]
+    for _, row in edited_log.iterrows():
+        if not row["❌"]:
+            wp = st.session_state.waypoints[int(row["_idx"])].copy()
+            wp["arr_type"] = row["Arrivée"]
+
+            branche_txt = str(row["Branche"])
+            if "➔" in branche_txt:
+                wp["name"] = branche_txt.split("➔", 1)[1].strip()
+            elif "->" in branche_txt:
+                wp["name"] = branche_txt.split("->", 1)[1].strip()
+
+            new_wps.append(wp)
+
+    st.session_state.waypoints = new_wps
+
+    if structure_changed:
         st.rerun()
 
     df_pdf = df_nav[["Branche", "Vent", "GS", "EET", "Fuel", "TOC/TOD", "Arrivée"]].copy()
