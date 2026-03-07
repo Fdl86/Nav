@@ -561,11 +561,11 @@ with col_ctrl:
 
 with col_map:
     if st.session_state.waypoints:
-            center = st.session_state.map_center
-            zoom = st.session_state.map_zoom
-        else:
-            center = [46.5, 2.5]
-            zoom = 6
+        center = st.session_state.map_center
+        zoom = st.session_state.map_zoom
+    else:
+        center = [46.5, 2.5]
+        zoom = 6
     
         m = build_map(
             st.session_state.waypoints,
