@@ -697,8 +697,8 @@ if len(st.session_state.waypoints) > 1:
     df_nav = pd.DataFrame(nav_data)
 
     with mission_placeholder.container():
-        st.markdown("### 🧭 Mission")
-        st.markdown("---")
+        st.subheader("🧭 Mission")
+        st.markdown('<div class="sa-divider"></div>', unsafe_allow_html=True)
         card = st.container(border=True)
         with card:
             st.caption(summarize_route_names(st.session_state.waypoints))
