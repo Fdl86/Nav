@@ -737,7 +737,11 @@ def build_vertical_profile(
     vt_marks: List[Tuple[float, float, float]] = []
     tdp_marks: List[Tuple[float, float, float]] = []
 
+    toc_marks: List[Tuple[float, str]] = []
+    tod_marks: List[Tuple[float, str]] = []
+
     cumulative_nm = 0.0
+    elapsed_min_total = 0.0
     current_alt = nav_points[0].elev_ft
 
     for i, leg in enumerate(legs):
@@ -751,7 +755,6 @@ def build_vertical_profile(
         terrain_alt = leg.arrival_elev_ft if is_arrival_aerodrome else 0.0
         cruise_alt = leg.altitude_ft
 
-        # Altitude visée à la fin de la branche
         if is_arrival_aerodrome and leg.end_type == "verticale":
             end_target_alt = terrain_alt + verticale_ft
         elif is_arrival_aerodrome and leg.end_type == "tour_de_piste":
@@ -761,48 +764,59 @@ def build_vertical_profile(
         else:
             end_target_alt = cruise_alt
 
-        # Distance nécessaire pour finir la montée initiale vers l'altitude de branche
+        # Montée initiale
         delta_climb_ft = cruise_alt - current_alt
         if delta_climb_ft > 1:
             climb_dist_nm = climb_speed_kt * ((delta_climb_ft / max(climb_rate_fpm, 1)) / 60.0)
+            climb_time_min = delta_climb_ft / max(climb_rate_fpm, 1)
         else:
             climb_dist_nm = 0.0
+            climb_time_min = 0.0
 
-        # Distance nécessaire pour la descente finale vers l'intégration / arrivée
+        # Descente finale
         delta_descent_ft = cruise_alt - end_target_alt
         if delta_descent_ft > 1:
             descent_dist_nm = leg.gs_kt * ((delta_descent_ft / max(descent_rate_fpm, 1)) / 60.0)
+            descent_time_min = delta_descent_ft / max(descent_rate_fpm, 1)
         else:
             descent_dist_nm = 0.0
+            descent_time_min = 0.0
 
-        # Si montée + descente dépassent la longueur de branche, on compresse proportionnellement
         total_special_nm = climb_dist_nm + descent_dist_nm
         if total_special_nm > leg.distance_nm and total_special_nm > 1e-6:
             scale = leg.distance_nm / total_special_nm
             climb_dist_nm *= scale
             descent_dist_nm *= scale
+            climb_time_min *= scale
+            descent_time_min *= scale
 
-        # TOC/TOD internes (pour la courbe uniquement, pas pour affichage)
-        toc_nm_local = climb_dist_nm
+        toc_nm_local = climb_dist_nm if climb_dist_nm > 0 else None
         tod_nm_local = leg.distance_nm - descent_dist_nm if descent_dist_nm > 0 else None
+
+        leg_start_elapsed_min = elapsed_min_total
+        if toc_nm_local is not None:
+            toc_x = round(cumulative_nm + toc_nm_local, 1)
+            toc_t = format_minutes_mmss(leg_start_elapsed_min + climb_time_min)
+            toc_marks.append((toc_x, toc_t))
+
+        if tod_nm_local is not None:
+            cruise_nm_before_descent = max(tod_nm_local - max(climb_dist_nm, 0.0), 0.0)
+            cruise_time_min = cruise_nm_before_descent / max(leg.gs_kt, 1e-6) * 60.0
+            tod_x = round(cumulative_nm + tod_nm_local, 1)
+            tod_t = format_minutes_mmss(leg_start_elapsed_min + climb_time_min + cruise_time_min)
+            tod_marks.append((tod_x, tod_t))
 
         leg_end_x = round(cumulative_nm + leg.distance_nm, 1)
 
-        # Marqueurs VT/TDP à la verticale de la distance du terrain
         if is_arrival_aerodrome:
             if leg.end_type == "verticale":
                 vt_marks.append((leg_end_x, terrain_alt, terrain_alt + verticale_ft))
             elif leg.end_type == "tour_de_piste":
                 tdp_marks.append((leg_end_x, terrain_alt, terrain_alt + tdp_ft))
 
-        # Ajouter une cassure si on redécolle d'un terrain à la branche suivante
-        if i > 0 and aircraft_x and aircraft_x[-1] is None:
-            pass
-
         for j, (pt, x_local) in enumerate(zip(seg_pts, seg_x_local)):
             x_global = round(cumulative_nm + x_local, 1)
 
-            # Profil terrain
             if i == 0 and j == 0:
                 terrain_x.append(x_global)
                 terrain_route_pts.append(pt)
@@ -810,22 +824,15 @@ def build_vertical_profile(
                 terrain_x.append(x_global)
                 terrain_route_pts.append(pt)
 
-            # Profil avion
-            # 1) montée initiale si nécessaire
-            if climb_dist_nm > 1e-6 and x_local <= toc_nm_local:
+            if climb_dist_nm > 1e-6 and x_local <= climb_dist_nm:
                 frac = x_local / climb_dist_nm
                 alt = current_alt + (cruise_alt - current_alt) * frac
-
-            # 2) descente finale si nécessaire
             elif tod_nm_local is not None and x_local >= tod_nm_local and descent_dist_nm > 1e-6:
                 frac = (x_local - tod_nm_local) / descent_dist_nm
                 alt = cruise_alt + (end_target_alt - cruise_alt) * frac
-
-            # 3) croisière
             else:
                 alt = cruise_alt
 
-            # ajout du point
             if i == 0 and j == 0:
                 aircraft_x.append(x_global)
                 aircraft_y.append(round(alt))
@@ -833,8 +840,6 @@ def build_vertical_profile(
                 aircraft_x.append(x_global)
                 aircraft_y.append(round(alt))
 
-        # Si la branche finit sur un terrain avec VT/TDP ET qu'il y a une branche suivante,
-        # alors on casse la courbe et on repart du terrain sur la branche suivante.
         if is_arrival_aerodrome and leg.end_type in ("verticale", "tour_de_piste") and next_leg_exists:
             aircraft_x.append(None)
             aircraft_y.append(None)
@@ -842,6 +847,7 @@ def build_vertical_profile(
         else:
             current_alt = end_target_alt
 
+        elapsed_min_total += leg.ete_min
         cumulative_nm = round(cumulative_nm + leg.distance_nm, 1)
 
     return {
@@ -851,6 +857,8 @@ def build_vertical_profile(
         "aircraft_alt_ft": aircraft_y,
         "vt_marks": vt_marks,
         "tdp_marks": tdp_marks,
+        "toc_marks": toc_marks,
+        "tod_marks": tod_marks,
     }
 
 def openaip_tiles(api_key: str):
@@ -1285,6 +1293,25 @@ with tabs[2]:
         hovertemplate="Dist %{x:.1f} NM<br>Avion %{y:.0f} ft<extra></extra>",
     ))
 
+    for x, t_txt in profile["toc_marks"]:
+        fig.add_annotation(
+            x=round(x, 1),
+            y=max(y for y in y_air if y is not None),
+            text=f"TOC {t_txt}",
+            showarrow=False,
+            yshift=10,
+            font=dict(color="green"),
+        )
+
+    for x, t_txt in profile["tod_marks"]:
+        fig.add_annotation(
+            x=round(x, 1),
+            y=max(y for y in y_air if y is not None),
+            text=f"TOD {t_txt}",
+            showarrow=False,
+            yshift=10,
+            font=dict(color="purple"),
+        )
     # VT / TDP : marqueurs à la distance exacte du terrain, bornés entre sol et altitude d'intégration
     for x, y0, y1 in profile["vt_marks"]:
         fig.add_shape(
