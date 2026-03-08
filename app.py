@@ -1314,7 +1314,7 @@ with st.expander("Branches", expanded=True):
                 key=f"end_{i}",
             )
 
-            if st.button(f"🗑️ Supprimer branche {i + 1}", key=f"del_{i}", use_container_width=True):
+            if st.button(f"🗑️ Supprimer branche {i + 1}", key=f"del_{i}", width="stretch"):
                 delete_idx = i
 
         st.divider()
@@ -1325,7 +1325,7 @@ with st.expander("Branches", expanded=True):
             st.session_state.legs_data = default_legs()
         st.rerun()
 
-    if st.button("➕ Ajouter une branche", use_container_width=True):
+    if st.button("➕ Ajouter une branche", width="stretch"):
         st.session_state.legs_data.append(
             {
                 "leg_type": "point_tournant",
@@ -1374,7 +1374,7 @@ tabs = st.tabs(["Carte", "Navigation", "Profil vertical", "Météo"])
 
 with tabs[0]:
     fmap = build_map(nav_points, legs, selected_leg_idx, openaip_key)
-    st_folium(fmap, use_container_width=True, height=560)
+    st_folium(fmap, width="stretch", height=560)
 
     sel = legs[selected_leg_idx - 1]
     c1, c2 = st.columns(2)
@@ -1530,7 +1530,7 @@ with tabs[2]:
 
     st.plotly_chart(
         fig,
-        use_container_width=True,
+        width="stretch",
         config={
             "displayModeBar": False,
             "scrollZoom": False,
