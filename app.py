@@ -1247,7 +1247,7 @@ with tabs[2]:
         tdp_ft=tdp_ft,
     )
 
-       elev_m = fetch_elevations(
+    elev_m = fetch_elevations(
         tuple(p[0] for p in profile["terrain_route_pts"]),
         tuple(p[1] for p in profile["terrain_route_pts"]),
     )
