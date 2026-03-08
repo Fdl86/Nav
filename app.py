@@ -1092,7 +1092,7 @@ with st.expander("Terrain de départ", expanded=True):
     <b>METAR</b>
     {metar_raw if metar_raw else "METAR indisponible."}
     
-    <b>TAF</b>
+    <br><b>TAF</b>
     {taf_raw if taf_raw else "TAF indisponible."}
         </div>
         """
