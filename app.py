@@ -784,7 +784,7 @@ def build_vertical_profile(
             terrain_alt = leg.arrival_elev_ft
 
             if leg.end_type == "verticale":
-                vt_x = round(tod_nm, 1) if (tod_nm is not None and d2_nm > 0.01) else leg_end_x
+                vt_x = leg_end_x
                 vt_top = terrain_alt + verticale_ft
                 vt_marks.append((vt_x, terrain_alt, vt_top))
 
@@ -793,10 +793,10 @@ def build_vertical_profile(
                 tdp_top = terrain_alt + tdp_ft
                 tdp_marks.append((tdp_x, terrain_alt, tdp_top))
 
-        seg_x_local = [round((j / n) * leg.distance_nm, 1) for j in range(n + 1)]
+        seg_x_local = [(j / n) * leg.distance_nm for j in range(n + 1)]
 
         for j, (pt, x_local) in enumerate(zip(seg_pts, seg_x_local)):
-            x_global = round(cumulative_nm + x_local, 1)
+            x_global = cumulative_nm + x_local
             if i == 0 and j == 0:
                 route_x.append(x_global)
                 terrain_route_pts.append(pt)
