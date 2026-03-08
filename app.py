@@ -291,10 +291,10 @@ def format_minutes_mmss(minutes_value: float) -> str:
     ss = total_seconds % 60
     return f"{mm:02d}:{ss:02d}"
 
-def drift_label(drift_deg: float) -> str:
-    if abs(drift_deg) < 0.05:
+def correction_label(wca_deg: float) -> str:
+    if abs(wca_deg) < 0.05:
         return "nulle"
-    return "droite" if drift_deg > 0 else "gauche"
+    return "droite" if wca_deg > 0 else "gauche"
 
 def haversine_nm(lat1, lon1, lat2, lon2):
     r = 6371000.0
@@ -984,7 +984,7 @@ def leg_card(leg: LegResult, selected: bool = False):
             </div>
             <div style="font-size:0.95rem;line-height:1.75;">
                 RV {route3(leg.route_true_deg)} •
-                Dérive {leg.drift_deg:+.1f}° ({drift_label(leg.drift_deg)}) •
+                CD {abs(leg.drift_deg):.1f}° ({correction_label(leg.drift_deg)}) •
                 Cv {route3(cv_true)} •
                 Dm {dm_txt} •
                 Cm {route3(cm_mag)}<br>
@@ -1231,7 +1231,7 @@ with tabs[0]:
         dm_txt = f"{abs(sel.declination_deg):.1f}°{'E' if sel.declination_deg >= 0 else 'W'}"
         metric_card("Branche", f"{sel.start_name} → {sel.end_name}")
         metric_card("RV", route3(sel.route_true_deg))
-        metric_card("Dérive", f"{sel.drift_deg:+.1f}° ({drift_label(sel.drift_deg)})")
+        metric_card("CD", f"{abs(sel.drift_deg):.1f}° ({correction_label(sel.drift_deg)})")
         metric_card("Cv", route3(sel.heading_true_deg))
     with c2:
         metric_card("Dm", dm_txt)
