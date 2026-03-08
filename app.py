@@ -733,6 +733,8 @@ def build_vertical_profile(
     alt_profile: List[float] = []
     toc_marks: List[float] = []
     tod_marks: List[float] = []
+    vt_marks: List[float] = []
+    tdp_marks: List[float] = []
 
     cumulative_nm = 0.0
     current_alt = nav_points[0].elev_ft
@@ -775,6 +777,13 @@ def build_vertical_profile(
         if tod_nm is not None and d2_nm > 0.01:
             tod_marks.append(tod_nm)
 
+        leg_end_x = round(cumulative_nm + leg.distance_nm, 1)
+        if leg.leg_type == "aerodrome":
+            if leg.end_type == "verticale":
+                vt_marks.append(leg_end_x)
+            elif leg.end_type == "tour_de_piste":
+                tdp_marks.append(leg_end_x)
+
         seg_x_local = [round((j / n) * leg.distance_nm, 1) for j in range(n + 1)]
 
         for j, (pt, x_local) in enumerate(zip(seg_pts, seg_x_local)):
@@ -798,7 +807,11 @@ def build_vertical_profile(
             if not alt_profile or (i > 0 or j > 0):
                 alt_profile.append(round(alt))
 
-        current_alt = end_target_alt
+        if leg.leg_type == "aerodrome" and leg.arrival_elev_ft > 0 and leg.end_type in ("verticale", "tour_de_piste"):
+            current_alt = leg.arrival_elev_ft
+        else:
+            current_alt = end_target_alt
+
         cumulative_nm = round(cumulative_nm + leg.distance_nm, 1)
 
     return {
@@ -807,6 +820,8 @@ def build_vertical_profile(
         "alt_profile_ft": alt_profile,
         "toc_marks_nm": toc_marks,
         "tod_marks_nm": tod_marks,
+        "vt_marks_nm": vt_marks,
+        "tdp_marks_nm": tdp_marks,
     }
 
 
@@ -1239,9 +1254,35 @@ with tabs[2]:
     ))
 
     for x in profile["toc_marks_nm"]:
-        fig.add_vline(x=round(x, 1), line_dash="dash", annotation_text="Fin montée")
+        fig.add_vline(
+            x=round(x, 1),
+            line_dash="dash",
+            line_color="green",
+            annotation_text="TOC",
+        )
     for x in profile["tod_marks_nm"]:
-        fig.add_vline(x=round(x, 1), line_dash="dot", annotation_text="Début descente")
+        fig.add_vline(
+            x=round(x, 1),
+            line_dash="dot",
+            line_color="purple",
+            annotation_text="TOD",
+        )
+
+    for x in profile["vt_marks_nm"]:
+        fig.add_vline(
+            x=round(x, 1),
+            line_dash="dot",
+            line_color="orange",
+            annotation_text="VT",
+        )
+
+    for x in profile["tdp_marks_nm"]:
+        fig.add_vline(
+            x=round(x, 1),
+            line_dash="dot",
+            line_color="deepskyblue",
+            annotation_text="TDP",
+        )
 
     fig.update_layout(
         height=430,
