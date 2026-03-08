@@ -685,29 +685,35 @@ def build_route(
                 arrival_elev_ft=end_pt.elev_ft,
             )
         )
-
         nav_points.append(end_pt)
         prev = end_pt
-
     return legs_out, nav_points
-
 
 @st.cache_data(ttl=60 * 60 * 6, show_spinner=False)
 def fetch_elevations(lats: Tuple[float, ...], lons: Tuple[float, ...]):
     try:
-        js = fetch_json(
-            OPENMETEO_ELEV,
-            params={
-                "latitude": ",".join(f"{x:.6f}" for x in lats),
-                "longitude": ",".join(f"{x:.6f}" for x in lons),
-            },
-            timeout=25,
-        )
-        vals = js.get("elevation", [])
-        return vals if vals else None
+        if not lats or not lons or len(lats) != len(lons):
+            return None
+        all_vals = []
+        chunk_size = 80  # évite de surcharger l'API sur les routes longues
+        for i in range(0, len(lats), chunk_size):
+            sub_lats = lats[i:i + chunk_size]
+            sub_lons = lons[i:i + chunk_size]
+            js = fetch_json(
+                OPENMETEO_ELEV,
+                params={
+                    "latitude": ",".join(f"{x:.6f}" for x in sub_lats),
+                    "longitude": ",".join(f"{x:.6f}" for x in sub_lons),
+                },
+                timeout=25,
+            )
+            vals = js.get("elevation", [])
+            if not vals:
+                return None
+            all_vals.extend(vals)
+        return all_vals if all_vals else None
     except Exception:
         return None
-
 
 def arrival_target_alt_ft(arr_elev_ft: float, end_type: str, is_aerodrome: bool, verticale_ft: float, tdp_ft: float, cruise_alt_ft: float):
     if not is_aerodrome or arr_elev_ft <= 0:
@@ -717,7 +723,6 @@ def arrival_target_alt_ft(arr_elev_ft: float, end_type: str, is_aerodrome: bool,
     if end_type == "tour_de_piste":
         return arr_elev_ft + tdp_ft
     return arr_elev_ft + 300.0
-
 
 def build_vertical_profile(
     nav_points: List[NavPoint],
@@ -754,14 +759,14 @@ def build_vertical_profile(
         is_arrival_aerodrome = leg.leg_type == "aerodrome" and leg.arrival_elev_ft > 0
         terrain_alt = leg.arrival_elev_ft if is_arrival_aerodrome else 0.0
         cruise_alt = leg.altitude_ft
-
+        
         if is_arrival_aerodrome and leg.end_type == "verticale":
             end_target_alt = terrain_alt + verticale_ft
         elif is_arrival_aerodrome and leg.end_type == "tour_de_piste":
             end_target_alt = terrain_alt + tdp_ft
-        elif is_arrival_aerodrome and leg.end_type == "standard":
-            end_target_alt = terrain_alt + 300.0
         else:
+            # En "standard", même si c'est un aérodrome, on l'utilise comme point tournant :
+            # pas de descente spécifique, on reste à l'altitude de branche.
             end_target_alt = cruise_alt
 
         # Montée initiale
