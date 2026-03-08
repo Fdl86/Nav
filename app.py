@@ -1249,7 +1249,6 @@ def build_map(nav_points: List[NavPoint],legs: List[LegResult],selected_idx: int
     min_lon = min(p[1] for p in all_pts)
     max_lon = max(p[1] for p in all_pts)
     m.fit_bounds([[min_lat, min_lon], [max_lat, max_lon]], padding=(18, 18))
-    folium.LayerControl(collapsed=True).add_to(m)
     return m
 
 def metric_card(label: str, value: str):
