@@ -843,7 +843,10 @@ def build_vertical_profile(
         if is_arrival_aerodrome and leg.end_type in ("verticale", "tour_de_piste") and next_leg_exists:
             aircraft_x.append(None)
             aircraft_y.append(None)
+            # La branche suivante doit repartir visuellement du terrain
             current_alt = terrain_alt
+            aircraft_x.append(leg_end_x)
+            aircraft_y.append(round(terrain_alt))
         else:
             current_alt = end_target_alt
 
