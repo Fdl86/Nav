@@ -1,4 +1,7 @@
-# app.py
+# app.py — Prépa VFR Mobile
+# Optimisé : factorisation airports, O(1) hour index, logs, constantes métier,
+#             helpers vent/carte, précalcul y_air, alias supprimé.
+import logging
 import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -35,8 +38,14 @@ OPENMETEO_DWD = "https://api.open-meteo.com/v1/dwd-icon"
 OPENMETEO_MF = "https://api.open-meteo.com/v1/meteofrance"
 OPENMETEO_ELEV = "https://api.open-meteo.com/v1/elevation"
 
+logger = logging.getLogger(__name__)
+
 END_TYPES = ["standard", "verticale", "tour_de_piste"]
 LEG_TYPES = ["point_tournant", "aerodrome"]
+
+# Altitudes d'intégration (ft au-dessus de l'élevation terrain)
+VERTICALE_FT: int = 1500
+TDP_FT: int = 1000
 
 DWD_LEVELS_M = {
     1000: 110, 975: 320, 950: 500, 925: 800, 900: 1000, 850: 1500,
@@ -122,74 +131,59 @@ def fetch_json(url: str, params: Optional[dict] = None, timeout: int = 20):
     return r.json()
 
 
-@st.cache_data(ttl=60 * 60 * 24, show_spinner=False)
-def load_airports_primary() -> pd.DataFrame:
-    df = pd.read_csv(AIRPORTS_CSV_URL, low_memory=False)
-    keep = [
-        "ident",
-        "name",
-        "latitude_deg",
-        "longitude_deg",
-        "elevation_ft",
-        "type",
-        "iso_country",
-    ]
-    df = df[keep].copy()
+_AIRPORTS_COLS = ["ident", "name", "latitude_deg", "longitude_deg", "elevation_ft", "type", "iso_country"]
+# Type: dict ICAO -> (name, lat, lon, elev_ft)
+_AirportRecord = Tuple[str, float, float, float]
+
+
+def _clean_airports_df(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalise un DataFrame aéroports quelle que soit la source CSV."""
+    for col in _AIRPORTS_COLS:
+        if col not in df.columns:
+            df[col] = None
+    df = df[_AIRPORTS_COLS].copy()
     df["ident"] = df["ident"].astype(str).str.upper()
     df["name"] = df["name"].fillna("").astype(str)
     df["latitude_deg"] = pd.to_numeric(df["latitude_deg"], errors="coerce")
     df["longitude_deg"] = pd.to_numeric(df["longitude_deg"], errors="coerce")
     df["elevation_ft"] = pd.to_numeric(df["elevation_ft"], errors="coerce").fillna(0)
-    df = df.dropna(subset=["latitude_deg", "longitude_deg"])
-    return df
+    return df.dropna(subset=["latitude_deg", "longitude_deg"])
+
+
+@st.cache_data(ttl=60 * 60 * 24, show_spinner=False)
+def load_airports_primary() -> pd.DataFrame:
+    return _clean_airports_df(pd.read_csv(AIRPORTS_CSV_URL, low_memory=False))
 
 
 @st.cache_data(ttl=60 * 60 * 24, show_spinner=False)
 def load_airports_fallback() -> pd.DataFrame:
-    df = pd.read_csv(AIRPORTS_FALLBACK_CSV_URL, low_memory=False)
-    needed = ["ident", "name", "latitude_deg", "longitude_deg", "elevation_ft", "type", "iso_country"]
-    for col in needed:
-        if col not in df.columns:
-            df[col] = None
-    df = df[needed].copy()
-    df["ident"] = df["ident"].astype(str).str.upper()
-    df["name"] = df["name"].fillna("").astype(str)
-    df["latitude_deg"] = pd.to_numeric(df["latitude_deg"], errors="coerce")
-    df["longitude_deg"] = pd.to_numeric(df["longitude_deg"], errors="coerce")
-    df["elevation_ft"] = pd.to_numeric(df["elevation_ft"], errors="coerce").fillna(0)
-    df = df.dropna(subset=["latitude_deg", "longitude_deg"])
-    return df
+    return _clean_airports_df(pd.read_csv(AIRPORTS_FALLBACK_CSV_URL, low_memory=False))
 
 
 @st.cache_data(ttl=60 * 60 * 24, show_spinner=False)
-def load_airports_index() -> Dict[str, Tuple[str, float, float, float]]:
-    index: Dict[str, Tuple[str, float, float, float]] = {}
+def load_airports_index() -> Dict[str, _AirportRecord]:
+    """Construit un dict ICAO→(name,lat,lon,elev) depuis les deux sources.
+    O(1) à la résolution. Priorité à la source primaire.
+    Les idents 'NAN' (NaN converti en str) sont filtrés.
+    """
+    index: Dict[str, _AirportRecord] = {}
+    _INVALID = {"NAN", "NONE", "", "NAN"}
 
-    try:
-        df_primary = load_airports_primary()
-        for row in df_primary.itertuples(index=False):
-            index[str(row.ident)] = (
-                str(row.name),
-                float(row.latitude_deg),
-                float(row.longitude_deg),
-                float(row.elevation_ft),
-            )
-    except Exception:
-        pass
-
-    try:
-        df_fallback = load_airports_fallback()
-        for row in df_fallback.itertuples(index=False):
-            ident = str(row.ident)
-            if ident not in index:
+    for loader in (load_airports_fallback, load_airports_primary):  # primaire en dernier = prioritaire
+        try:
+            df = loader()
+            for row in df.itertuples(index=False):
+                ident = str(row.ident)
+                if ident in _INVALID:
+                    continue
                 index[ident] = (
                     str(row.name),
                     float(row.latitude_deg),
                     float(row.longitude_deg),
                     float(row.elevation_ft),
                 )
-    except Exception:
-        pass
+        except Exception as exc:
+            logger.warning("load_airports_index loader error: %s", exc)
 
     return index
 
@@ -198,22 +192,14 @@ def resolve_airport(icao: str) -> Optional[Aerodrome]:
     icao = (icao or "").strip().upper()
     if not icao:
         return None
-
     rec = load_airports_index().get(icao)
     if not rec:
         return None
-
     name, lat, lon, elev_ft = rec
-    return Aerodrome(
-        icao=icao,
-        name=name,
-        lat=lat,
-        lon=lon,
-        elev_ft=elev_ft,
-    )
+    return Aerodrome(icao=icao, name=name, lat=lat, lon=lon, elev_ft=elev_ft)
 
 
-@st.cache_data(ttl=60 * 10, show_spinner=False)
+@st.cache_data(ttl=60 * 5, show_spinner=False)
 def fetch_metar(icao: str) -> Tuple[Optional[str], Optional[dict]]:
     icao = (icao or "").strip().upper()
     if not icao:
@@ -240,7 +226,8 @@ def fetch_metar(icao: str) -> Tuple[Optional[str], Optional[dict]]:
             "wind_speed_kt": m.get("wspd"),
         }
         return raw, decoded
-    except Exception:
+    except Exception as exc:
+        logger.warning("fetch_metar(%s): %s", icao, exc)
         return None, None
 
 
@@ -268,19 +255,11 @@ def fetch_taf(icao: str) -> Optional[str]:
             or item.get("raw")
             or item.get("taf")
         )
-    except Exception:
+    except Exception as exc:
+        logger.warning("fetch_taf(%s): %s", icao, exc)
         return None
 
 
-@st.cache_data(ttl=60 * 10, show_spinner=False)
-def fetch_airport_weather_bundle(icao: str) -> Dict[str, object]:
-    metar_raw, metar_decoded = fetch_metar(icao)
-    taf_raw = fetch_taf(icao)
-    return {
-        "metar_raw": metar_raw,
-        "metar_decoded": metar_decoded,
-        "taf_raw": taf_raw,
-    }
 def ft_to_m(ft: float) -> float:
     return ft * 0.3048
 
@@ -404,8 +383,13 @@ def generation_hour_utc() -> datetime:
     return nearest_hour(datetime.now(timezone.utc))
 
 
+# Niveaux pré-triés par altitude (calculé une seule fois au démarrage)
+_DWD_LEVELS_SORTED = sorted(DWD_LEVELS_M.items(), key=lambda x: x[1])
+_MF_LEVELS_SORTED = sorted(MF_LEVELS_M.items(), key=lambda x: x[1])
+
+
 def pick_levels(target_alt_m: float, level_map: Dict[int, float]):
-    levels = sorted(level_map.items(), key=lambda x: x[1])
+    levels = _DWD_LEVELS_SORTED if level_map is DWD_LEVELS_M else _MF_LEVELS_SORTED
     if target_alt_m <= levels[0][1]:
         return levels[0][0], levels[0][0]
     if target_alt_m >= levels[-1][1]:
@@ -438,6 +422,23 @@ def fetch_openmeteo_hour_block(
 
 
 def get_hour_index(hourly_time: List[str], target_dt: datetime) -> Optional[int]:
+    """Calcule l'index de l'heure cible en O(1) via décalage depuis le premier élément."""
+    if not hourly_time:
+        return None
+    try:
+        # Les séries Open-Meteo sont horaires continues — on calcule l'offset directement.
+        from datetime import datetime as _dt
+        t0 = _dt.fromisoformat(hourly_time[0])
+        if t0.tzinfo is None:
+            t0 = t0.replace(tzinfo=timezone.utc)
+        delta_h = int((target_dt - t0).total_seconds() // 3600)
+        if 0 <= delta_h < len(hourly_time):
+            # Vérification de cohérence (au cas où la série aurait des trous)
+            if hourly_time[delta_h] == target_dt.strftime("%Y-%m-%dT%H:%M"):
+                return delta_h
+    except Exception:
+        pass
+    # Fallback linéaire (ne devrait jamais arriver)
     target_key = target_dt.strftime("%Y-%m-%dT%H:%M")
     for i, t in enumerate(hourly_time):
         if t == target_key:
@@ -512,24 +513,46 @@ def mean_vector_from_pairs(pairs: List[Tuple[float, float]]) -> Optional[Tuple[f
     return wind_from_uv(u_avg, v_avg)
 
 
-def sample_point_count(distance_nm: float) -> int:
-    if distance_nm <= 15:
-        return 2   # 3 points
-    if distance_nm <= 40:
-        return 4   # 5 points
-    return 6       # 7 points
+def _build_pressure_vars(p_low: int, p_high: int) -> List[str]:
+    """Construit la liste des variables de vent à niveau de pression."""
+    vars_ = [
+        f"wind_speed_{p_low}hPa",
+        f"wind_direction_{p_low}hPa",
+        f"geopotential_height_{p_low}hPa",
+    ]
+    if p_high != p_low:
+        vars_ += [
+            f"wind_speed_{p_high}hPa",
+            f"wind_direction_{p_high}hPa",
+            f"geopotential_height_{p_high}hPa",
+        ]
+    return vars_
 
 
-def mean_branch_pressure_wind(
+def _union_pressure_vars(altitudes_ft: List[float], level_map: Dict[int, float]) -> Tuple[str, ...]:
+    """Union des variables de pression nécessaires pour un ensemble d'altitudes."""
+    vars_set: set = set()
+    for alt_ft in altitudes_ft:
+        p_low, p_high = pick_levels(ft_to_m(alt_ft), level_map)
+        vars_set.update(_build_pressure_vars(p_low, p_high))
+    return tuple(sorted(vars_set))
+
+
+def _avg_wind_from_items(
     items: List[dict],
-    point_indices: List[int],
     gen_hour: datetime,
     altitude_ft: float,
     level_map: Dict[int, float],
+    point_indices: Optional[List[int]] = None,
 ) -> Optional[Tuple[float, float]]:
+    """Moyenne vectorielle des vents pression sur un sous-ensemble d'items.
+
+    Si point_indices est fourni, on sélectionne uniquement ces items dans la liste.
+    Sinon on itère sur tous.
+    """
+    targets = [items[i] for i in point_indices] if point_indices is not None else items
     pairs = []
-    for idx in point_indices:
-        item = items[idx]
+    for item in targets:
         hour_idx = get_hour_index(item.get("hourly", {}).get("time", []), gen_hour)
         pair = interpolate_pressure_wind_for_item(item, hour_idx, altitude_ft, level_map)
         if pair:
@@ -537,14 +560,15 @@ def mean_branch_pressure_wind(
     return mean_vector_from_pairs(pairs)
 
 
-def mean_branch_surface_wind(
+def _avg_surface_wind_from_items(
     items: List[dict],
-    point_indices: List[int],
     gen_hour: datetime,
+    point_indices: Optional[List[int]] = None,
 ) -> Optional[Tuple[float, float]]:
+    """Moyenne vectorielle des vents surface sur un sous-ensemble d'items."""
+    targets = [items[i] for i in point_indices] if point_indices is not None else items
     pairs = []
-    for idx in point_indices:
-        item = items[idx]
+    for item in targets:
         hour_idx = get_hour_index(item.get("hourly", {}).get("time", []), gen_hour)
         pair = extract_surface_wind_for_item(item, hour_idx)
         if pair:
@@ -552,136 +576,145 @@ def mean_branch_surface_wind(
     return mean_vector_from_pairs(pairs)
 
 
-def union_pressure_vars(altitudes_ft: List[float], level_map: Dict[int, float]) -> Tuple[str, ...]:
-    vars_set = set()
-    for altitude_ft in altitudes_ft:
-        p_low, p_high = pick_levels(ft_to_m(altitude_ft), level_map)
-        vars_set.update({
-            f"wind_speed_{p_low}hPa",
-            f"wind_direction_{p_low}hPa",
-            f"geopotential_height_{p_low}hPa",
-        })
-        if p_high != p_low:
-            vars_set.update({
-                f"wind_speed_{p_high}hPa",
-                f"wind_direction_{p_high}hPa",
-                f"geopotential_height_{p_high}hPa",
-            })
-    return tuple(sorted(vars_set))
-
-
-def prefetch_winds_for_geometries(
+def prefetch_winds_for_all_legs(
     geometries: List[dict],
     metar_decoded: Optional[dict] = None,
 ) -> Dict[int, Tuple[str, float, float]]:
+    """Récupère les vents pour toutes les branches en un minimum de requêtes batch.
+
+    Stratégie :
+      - Regroupe tous les points de toutes les branches en une seule requête
+        par modèle/niveau (1 requête ICON-D2, 1 AROME, etc.)
+      - Open-Meteo multi-points retourne une liste ordonnée : items[i] correspond
+        exactement au point (lats[i], lons[i]) — on peut donc indexer directement.
+      - Cascade ICON-D2 niveau → AROME niveau → ICON-D2 10m → AROME 10m → METAR.
+    """
     if not geometries:
         return {}
 
     gen_hour = generation_hour_utc()
 
-    point_lats: List[float] = []
-    point_lons: List[float] = []
-    branch_point_indices: Dict[int, List[int]] = {}
+    # --- Construction du tableau global de points ---
+    # branch_slices[leg_idx] = slice(start, end) dans les listes globales
+    all_lats: List[float] = []
+    all_lons: List[float] = []
+    branch_slices: Dict[int, slice] = {}
     altitudes_ft: List[float] = []
 
-    point_cursor = 0
     for geom in geometries:
         pts = geom["sample_points"]
-        count = len(pts)
-        branch_point_indices[geom["idx"]] = list(range(point_cursor, point_cursor + count))
-        point_cursor += count
-        point_lats.extend(p[0] for p in pts)
-        point_lons.extend(p[1] for p in pts)
+        start = len(all_lats)
+        all_lats.extend(p[0] for p in pts)
+        all_lons.extend(p[1] for p in pts)
+        branch_slices[geom["idx"]] = slice(start, start + len(pts))
         altitudes_ft.append(geom["altitude_ft"])
 
-    lats = tuple(round(x, 6) for x in point_lats)
-    lons = tuple(round(x, 6) for x in point_lons)
+    lats = tuple(round(x, 6) for x in all_lats)
+    lons = tuple(round(x, 6) for x in all_lons)
 
-    icon_pressure_vars = union_pressure_vars(altitudes_ft, DWD_LEVELS_M)
-    mf_pressure_vars = union_pressure_vars(altitudes_ft, MF_LEVELS_M)
+    # Variables pression union (couvre toutes les altitudes en une requête)
+    icon_pressure_vars = _union_pressure_vars(altitudes_ft, DWD_LEVELS_M)
+    mf_pressure_vars = _union_pressure_vars(altitudes_ft, MF_LEVELS_M)
     surface_vars = ("wind_speed_10m", "wind_direction_10m")
 
-    icon_pressure_items = None
-    mf_pressure_items = None
-    icon_surface_items = None
-    mf_surface_items = None
+    # --- Tentative de fetch batch par source ---
+    icon_pressure_items: Optional[List[dict]] = None
+    mf_pressure_items: Optional[List[dict]] = None
+    icon_surface_items: Optional[List[dict]] = None
+    mf_surface_items: Optional[List[dict]] = None
 
-    if icon_pressure_vars:
-        try:
-            icon_pressure_items = fetch_openmeteo_hour_block("ICON-D2", lats, lons, icon_pressure_vars)
-        except Exception:
-            icon_pressure_items = None
-
-    wind_by_leg: Dict[int, Tuple[str, float, float]] = {}
-
-    unresolved = []
-    for geom in geometries:
-        point_indices = branch_point_indices[geom["idx"]]
-        avg = None
-        if icon_pressure_items:
-            avg = mean_branch_pressure_wind(icon_pressure_items, point_indices, gen_hour, geom["altitude_ft"], DWD_LEVELS_M)
-        if avg:
-            wind_by_leg[geom["idx"]] = ("ICON-D2 niveau", avg[0], avg[1])
+    try:
+        raw = fetch_openmeteo_hour_block("ICON-D2", lats, lons, icon_pressure_vars)
+        # Vérification : Open-Meteo doit retourner autant d'items que de points
+        if isinstance(raw, list) and len(raw) == len(lats):
+            icon_pressure_items = raw
         else:
-            unresolved.append(geom)
+            logger.warning("prefetch ICON-D2 niveau: réponse inattendue (%d items pour %d points)", len(raw) if isinstance(raw, list) else -1, len(lats))
+    except Exception as exc:
+        logger.warning("prefetch ICON-D2 niveau: %s", exc)
 
-    if unresolved and mf_pressure_vars:
-        try:
-            mf_pressure_items = fetch_openmeteo_hour_block("AROME", lats, lons, mf_pressure_vars)
-        except Exception:
-            mf_pressure_items = None
+    try:
+        raw = fetch_openmeteo_hour_block("AROME", lats, lons, mf_pressure_vars)
+        if isinstance(raw, list) and len(raw) == len(lats):
+            mf_pressure_items = raw
+        else:
+            logger.warning("prefetch AROME niveau: réponse inattendue")
+    except Exception as exc:
+        logger.warning("prefetch AROME niveau: %s", exc)
 
-        still_unresolved = []
+    # --- Résolution par branche en cascade ---
+    wind_by_leg: Dict[int, Tuple[str, float, float]] = {}
+    unresolved = list(geometries)
+
+    # 1. ICON-D2 niveau pression
+    if icon_pressure_items:
+        still = []
         for geom in unresolved:
-            avg = None
-            if mf_pressure_items:
-                avg = mean_branch_pressure_wind(
-                    mf_pressure_items,
-                    branch_point_indices[geom["idx"]],
-                    gen_hour,
-                    geom["altitude_ft"],
-                    MF_LEVELS_M,
-                )
+            sl = branch_slices[geom["idx"]]
+            indices = list(range(sl.start, sl.stop))
+            avg = _avg_wind_from_items(icon_pressure_items, gen_hour, geom["altitude_ft"], DWD_LEVELS_M, indices)
+            if avg:
+                wind_by_leg[geom["idx"]] = ("ICON-D2 niveau", avg[0], avg[1])
+            else:
+                still.append(geom)
+        unresolved = still
+
+    # 2. AROME niveau pression
+    if unresolved and mf_pressure_items:
+        still = []
+        for geom in unresolved:
+            sl = branch_slices[geom["idx"]]
+            indices = list(range(sl.start, sl.stop))
+            avg = _avg_wind_from_items(mf_pressure_items, gen_hour, geom["altitude_ft"], MF_LEVELS_M, indices)
             if avg:
                 wind_by_leg[geom["idx"]] = ("AROME niveau", avg[0], avg[1])
             else:
-                still_unresolved.append(geom)
-        unresolved = still_unresolved
+                still.append(geom)
+        unresolved = still
 
+    # 3. ICON-D2 surface 10m
     if unresolved:
         try:
-            icon_surface_items = fetch_openmeteo_hour_block("ICON-D2", lats, lons, surface_vars)
-        except Exception:
-            icon_surface_items = None
+            raw = fetch_openmeteo_hour_block("ICON-D2", lats, lons, surface_vars)
+            if isinstance(raw, list) and len(raw) == len(lats):
+                icon_surface_items = raw
+        except Exception as exc:
+            logger.warning("prefetch ICON-D2 10m: %s", exc)
 
-        still_unresolved = []
-        for geom in unresolved:
-            avg = None
-            if icon_surface_items:
-                avg = mean_branch_surface_wind(icon_surface_items, branch_point_indices[geom["idx"]], gen_hour)
-            if avg:
-                wind_by_leg[geom["idx"]] = ("ICON-D2 10m", avg[0], avg[1])
-            else:
-                still_unresolved.append(geom)
-        unresolved = still_unresolved
+        if icon_surface_items:
+            still = []
+            for geom in unresolved:
+                sl = branch_slices[geom["idx"]]
+                indices = list(range(sl.start, sl.stop))
+                avg = _avg_surface_wind_from_items(icon_surface_items, gen_hour, indices)
+                if avg:
+                    wind_by_leg[geom["idx"]] = ("ICON-D2 10m", avg[0], avg[1])
+                else:
+                    still.append(geom)
+            unresolved = still
 
+    # 4. AROME surface 10m
     if unresolved:
         try:
-            mf_surface_items = fetch_openmeteo_hour_block("AROME", lats, lons, surface_vars)
-        except Exception:
-            mf_surface_items = None
+            raw = fetch_openmeteo_hour_block("AROME", lats, lons, surface_vars)
+            if isinstance(raw, list) and len(raw) == len(lats):
+                mf_surface_items = raw
+        except Exception as exc:
+            logger.warning("prefetch AROME 10m: %s", exc)
 
-        still_unresolved = []
-        for geom in unresolved:
-            avg = None
-            if mf_surface_items:
-                avg = mean_branch_surface_wind(mf_surface_items, branch_point_indices[geom["idx"]], gen_hour)
-            if avg:
-                wind_by_leg[geom["idx"]] = ("AROME 10m", avg[0], avg[1])
-            else:
-                still_unresolved.append(geom)
-        unresolved = still_unresolved
+        if mf_surface_items:
+            still = []
+            for geom in unresolved:
+                sl = branch_slices[geom["idx"]]
+                indices = list(range(sl.start, sl.stop))
+                avg = _avg_surface_wind_from_items(mf_surface_items, gen_hour, indices)
+                if avg:
+                    wind_by_leg[geom["idx"]] = ("AROME 10m", avg[0], avg[1])
+                else:
+                    still.append(geom)
+            unresolved = still
 
+    # 5. Fallback METAR / aucune donnée
     metar_pair = metar_surface_wind(metar_decoded)
     for geom in unresolved:
         if metar_pair:
@@ -690,13 +723,28 @@ def prefetch_winds_for_geometries(
             wind_by_leg[geom["idx"]] = ("Aucune donnée vent", 0.0, 0.0)
 
     return wind_by_leg
-    
+
+
+def magnetic_declination_deg(lat: float, lon: float, alt_ft: float = 0.0) -> float:
+    if not GEOMAG_AVAILABLE or _GEOMAG is None:
+        return 0.0
+    try:
+        now = datetime.now(timezone.utc)
+        year_fraction = now.year + (now.timetuple().tm_yday / 365.25)
+        result = _GEOMAG.calculate(glat=lat, glon=lon, alt=ft_to_m(alt_ft) / 1000.0, time=year_fraction)
+        return float(result.d)
+    except Exception:
+        return 0.0
+
+
+def true_to_magnetic(true_deg: float, declination_deg: float) -> float:
+    # variation Est = on soustrait, Ouest = on ajoute
+    return deg_norm(true_deg - declination_deg)
+
+
 def wind_correction(course_deg: float, tas_kt: float, wind_from_deg: float, wind_speed_kt: float):
     delta = math.radians(shortest_angle_deg(wind_from_deg, course_deg))
-    ratio = 0.0 if tas_kt <= 0 else max(
-        -0.9999,
-        min(0.9999, (wind_speed_kt / tas_kt) * math.sin(delta))
-    )
+    ratio = 0.0 if tas_kt <= 0 else max(-0.9999, min(0.9999, (wind_speed_kt / tas_kt) * math.sin(delta)))
     wca = math.asin(ratio)
     gs = tas_kt * math.cos(wca) - wind_speed_kt * math.cos(delta)
     gs = max(gs, 20.0)
@@ -704,25 +752,6 @@ def wind_correction(course_deg: float, tas_kt: float, wind_from_deg: float, wind
     heading = deg_norm(course_deg + drift)
     return drift, heading, gs
 
-def magnetic_declination_deg(lat: float, lon: float, alt_ft: float = 0.0) -> float:
-    if not GEOMAG_AVAILABLE or _GEOMAG is None:
-        return 0.0
-    try:
-        now_utc = datetime.now(timezone.utc)
-        year_fraction = now_utc.year + (now_utc.timetuple().tm_yday / 365.25)
-        result = _GEOMAG.calculate(
-            glat=lat,
-            glon=lon,
-            alt=ft_to_m(alt_ft) / 1000.0,
-            time=year_fraction,
-        )
-        return float(result.d)
-    except Exception:
-        return 0.0
-
-def true_to_magnetic(true_deg: float, declination_deg: float) -> float:
-    # variation Est = on soustrait, Ouest = on ajoute
-    return deg_norm(true_deg - declination_deg)
 
 def build_route(
     departure: Aerodrome,
@@ -730,16 +759,18 @@ def build_route(
     tas_kt: float,
     departure_metar_decoded: Optional[dict] = None,
 ) -> Tuple[List[LegResult], List[NavPoint]]:
-    geometries: List[dict] = []
-    nav_points: List[NavPoint] = [NavPoint(departure.icao, departure.lat, departure.lon, departure.elev_ft, departure.icao)]
-
+    nav_points: List[NavPoint] = [
+        NavPoint(departure.icao, departure.lat, departure.lon, departure.elev_ft, departure.icao)
+    ]
     prev = nav_points[0]
 
+    # --- Passe 1 : géométrie pure (pas d'API) ---
+    geometries: List[dict] = []
     for idx, leg in enumerate(legs_in, start=1):
         if leg.leg_type == "aerodrome":
             arr = resolve_airport(leg.target_icao)
             if not arr:
-                raise ValueError(f"Aérodrome introuvable: {leg.target_icao}")
+                raise ValueError(f"Aérodrome introuvable : {leg.target_icao}")
             end_pt = NavPoint(arr.icao, arr.lat, arr.lon, arr.elev_ft, arr.icao)
             route_true = initial_bearing_deg(prev.lat, prev.lon, end_pt.lat, end_pt.lon)
             distance_nm = haversine_nm(prev.lat, prev.lon, end_pt.lat, end_pt.lon)
@@ -747,85 +778,75 @@ def build_route(
             route_true = deg_norm(leg.route_true_deg)
             distance_nm = leg.distance_nm
             lat2, lon2 = destination_point(prev.lat, prev.lon, route_true, distance_nm)
-            label = leg.label.strip() if leg.label.strip() else f"PT {idx}"
+            label = leg.label.strip() or f"PT {idx}"
             end_pt = NavPoint(label, lat2, lon2, 0.0, "")
 
-        sample_points = interpolate_line(
-            prev.lat,
-            prev.lon,
-            end_pt.lat,
-            end_pt.lon,
-            n=sample_point_count(distance_nm),
-        )
+        mid_lat = (prev.lat + end_pt.lat) / 2.0
+        mid_lon = (prev.lon + end_pt.lon) / 2.0
+        # 5 points d'échantillonnage par branche (compromis qualité/volume)
+        sample_points = interpolate_line(prev.lat, prev.lon, end_pt.lat, end_pt.lon, n=4)
 
-        geometries.append(
-            {
-                "idx": idx,
-                "leg_type": leg.leg_type,
-                "start_name": prev.name,
-                "end_name": end_pt.name,
-                "start_lat": prev.lat,
-                "start_lon": prev.lon,
-                "end_lat": end_pt.lat,
-                "end_lon": end_pt.lon,
-                "distance_nm": distance_nm,
-                "route_true_deg": route_true,
-                "altitude_ft": leg.altitude_ft,
-                "end_type": leg.end_type,
-                "arrival_elev_ft": end_pt.elev_ft,
-                "mid_lat": (prev.lat + end_pt.lat) / 2.0,
-                "mid_lon": (prev.lon + end_pt.lon) / 2.0,
-                "sample_points": sample_points,
-            }
-        )
-
+        geometries.append({
+            "idx": idx,
+            "leg_type": leg.leg_type,
+            "start_name": prev.name,
+            "end_name": end_pt.name,
+            "start_lat": prev.lat, "start_lon": prev.lon,
+            "end_lat": end_pt.lat, "end_lon": end_pt.lon,
+            "mid_lat": mid_lat, "mid_lon": mid_lon,
+            "distance_nm": distance_nm,
+            "route_true_deg": route_true,
+            "altitude_ft": leg.altitude_ft,
+            "end_type": leg.end_type,
+            "arrival_elev_ft": end_pt.elev_ft,
+            "sample_points": sample_points,
+        })
         nav_points.append(end_pt)
         prev = end_pt
 
-    wind_by_leg = prefetch_winds_for_geometries(geometries, departure_metar_decoded)
+    # --- Passe 2 : vents en batch (1-2 requêtes max par modèle) ---
+    wind_by_leg = prefetch_winds_for_all_legs(geometries, departure_metar_decoded)
 
+    # --- Passe 3 : calcul nav ---
     legs_out: List[LegResult] = []
     for geom in geometries:
-        wind_source, wind_dir, wind_speed = wind_by_leg.get(geom["idx"], ("Aucune donnée vent", 0.0, 0.0))
+        wind_source, wind_dir, wind_speed = wind_by_leg.get(
+            geom["idx"], ("Aucune donnée vent", 0.0, 0.0)
+        )
         drift, heading_true, gs = wind_correction(geom["route_true_deg"], tas_kt, wind_dir, wind_speed)
         ete_min = geom["distance_nm"] / gs * 60.0
-
         decl = magnetic_declination_deg(geom["mid_lat"], geom["mid_lon"], geom["altitude_ft"])
         route_mag = true_to_magnetic(geom["route_true_deg"], decl)
         heading_mag = true_to_magnetic(heading_true, decl)
 
-        legs_out.append(
-            LegResult(
-                idx=geom["idx"],
-                leg_type=geom["leg_type"],
-                start_name=geom["start_name"],
-                end_name=geom["end_name"],
-                start_lat=geom["start_lat"],
-                start_lon=geom["start_lon"],
-                end_lat=geom["end_lat"],
-                end_lon=geom["end_lon"],
-                mid_lat=geom["mid_lat"],
-                mid_lon=geom["mid_lon"],
-                distance_nm=geom["distance_nm"],
-                route_true_deg=geom["route_true_deg"],
-                declination_deg=decl,
-                route_mag_deg=route_mag,
-                altitude_ft=geom["altitude_ft"],
-                tas_kt=tas_kt,
-                wind_source=wind_source,
-                wind_dir_deg=wind_dir,
-                wind_speed_kt=wind_speed,
-                drift_deg=drift,
-                heading_true_deg=heading_true,
-                heading_mag_deg=heading_mag,
-                gs_kt=gs,
-                ete_min=ete_min,
-                end_type=geom["end_type"],
-                arrival_elev_ft=geom["arrival_elev_ft"],
-            )
-        )
+        legs_out.append(LegResult(
+            idx=geom["idx"],
+            leg_type=geom["leg_type"],
+            start_name=geom["start_name"],
+            end_name=geom["end_name"],
+            start_lat=geom["start_lat"], start_lon=geom["start_lon"],
+            end_lat=geom["end_lat"], end_lon=geom["end_lon"],
+            mid_lat=geom["mid_lat"], mid_lon=geom["mid_lon"],
+            distance_nm=geom["distance_nm"],
+            route_true_deg=geom["route_true_deg"],
+            declination_deg=decl,
+            route_mag_deg=route_mag,
+            altitude_ft=geom["altitude_ft"],
+            tas_kt=tas_kt,
+            wind_source=wind_source,
+            wind_dir_deg=wind_dir,
+            wind_speed_kt=wind_speed,
+            drift_deg=drift,
+            heading_true_deg=heading_true,
+            heading_mag_deg=heading_mag,
+            gs_kt=gs,
+            ete_min=ete_min,
+            end_type=geom["end_type"],
+            arrival_elev_ft=geom["arrival_elev_ft"],
+        ))
 
     return legs_out, nav_points
+
 @st.cache_data(ttl=60 * 60 * 6, show_spinner=False)
 def fetch_elevations(lats: Tuple[float, ...], lons: Tuple[float, ...]):
     try:
@@ -1049,12 +1070,28 @@ def offset_point_perpendicular(
     out_lon = lon + (dx_nm / (60.0 * max(math.cos(mid_lat_rad), 1e-6)))
     return out_lat, out_lon
 
-def destination_point_nm(lat_deg: float, lon_deg: float, bearing_deg: float, distance_nm: float) -> Tuple[float, float]:
-    return destination_point(lat_deg, lon_deg, bearing_deg, distance_nm)
+def _end_type_div_icon(label: str, color: str, font_size: str = "14px") -> folium.DivIcon:
+    """Génère un DivIcon léger pour les marqueurs VT / TDP."""
+    shadow = " ".join([
+        "-1px -1px 0 rgba(255,255,255,0.95),",
+        " 1px -1px 0 rgba(255,255,255,0.95),",
+        "-1px  1px 0 rgba(255,255,255,0.95),",
+        " 1px  1px 0 rgba(255,255,255,0.95)",
+    ])
+    html = (
+        f'<div style="font-size:{font_size};font-weight:700;color:{color};'
+        f'background:transparent;border:none;padding:0;'
+        f'text-shadow:{shadow}">{label}</div>'
+    )
+    return folium.DivIcon(icon_size=(0, 0), icon_anchor=(0, 0), html=html)
 
-def build_map(nav_points: List[NavPoint],legs: List[LegResult],selected_idx: int,openaip_key: str,basemap: str,):
+
+def build_map(nav_points: List[NavPoint], legs: List[LegResult], selected_idx: int, openaip_key: str, basemap: str):
     all_pts = [(p.lat, p.lon) for p in nav_points]
-    center = [sum(x[0] for x in all_pts) / len(all_pts), sum(x[1] for x in all_pts) / len(all_pts)]
+    lats_all = [p[0] for p in all_pts]
+    lons_all = [p[1] for p in all_pts]
+    n_pts = len(all_pts)
+    center = [sum(lats_all) / n_pts, sum(lons_all) / n_pts]
 
     m = folium.Map(location=center, zoom_start=8, control_scale=True, tiles=None)
 
@@ -1117,53 +1154,13 @@ def build_map(nav_points: List[NavPoint],legs: List[LegResult],selected_idx: int
         if leg.end_type == "verticale":
             folium.Marker(
                 [leg.end_lat, leg.end_lon],
-                icon=folium.DivIcon(
-                    icon_size=(0, 0),
-                    icon_anchor=(0, 0),
-                    html="""
-                    <div style="
-                        font-size:14px;
-                        font-weight:700;
-                        color:#f59e0b;
-                        background:transparent;
-                        border:none;
-                        padding:0;
-                        text-shadow:
-                            -1px -1px 0 rgba(255,255,255,0.95),
-                             1px -1px 0 rgba(255,255,255,0.95),
-                            -1px  1px 0 rgba(255,255,255,0.95),
-                             1px  1px 0 rgba(255,255,255,0.95);
-                    ">
-                        VT
-                    </div>
-                    """
-                )
+                icon=_end_type_div_icon("VT", "#f59e0b", "14px"),
             ).add_to(m)
 
         elif leg.end_type == "tour_de_piste":
             folium.Marker(
                 [leg.end_lat, leg.end_lon],
-                icon=folium.DivIcon(
-                    icon_size=(0, 0),
-                    icon_anchor=(0, 0),
-                    html="""
-                    <div style="
-                        font-size:12px;
-                        font-weight:700;
-                        color:#00a6ff;
-                        background:transparent;
-                        border:none;
-                        padding:0;
-                        text-shadow:
-                            -1px -1px 0 rgba(255,255,255,0.95),
-                             1px -1px 0 rgba(255,255,255,0.95),
-                            -1px  1px 0 rgba(255,255,255,0.95),
-                             1px  1px 0 rgba(255,255,255,0.95);
-                    ">
-                        TDP
-                    </div>
-                    """
-                )
+                icon=_end_type_div_icon("TDP", "#00a6ff", "12px"),
             ).add_to(m)
 
         # ===== Vent sur toutes les branches =====
@@ -1184,7 +1181,7 @@ def build_map(nav_points: List[NavPoint],legs: List[LegResult],selected_idx: int
         arrow_bearing = wind_to_deg(leg.wind_dir_deg)
         arrow_len_nm = min(1.0, 0.45 + 0.03 * leg.wind_speed_kt)
 
-        tip_lat, tip_lon = destination_point_nm(anchor_lat, anchor_lon, arrow_bearing, arrow_len_nm)
+        tip_lat, tip_lon = destination_point(anchor_lat, anchor_lon, arrow_bearing, arrow_len_nm)
 
         arrow_color = "#1d4ed8" if selected else "#60a5fa"
         label_color = "#0f3b82" if selected else "#2563eb"
@@ -1196,8 +1193,8 @@ def build_map(nav_points: List[NavPoint],legs: List[LegResult],selected_idx: int
             opacity=0.9,
         ).add_to(m)
 
-        head_left_lat, head_left_lon = destination_point_nm(tip_lat, tip_lon, arrow_bearing + 150, 0.18)
-        head_right_lat, head_right_lon = destination_point_nm(tip_lat, tip_lon, arrow_bearing - 150, 0.18)
+        head_left_lat, head_left_lon = destination_point(tip_lat, tip_lon, arrow_bearing + 150, 0.18)
+        head_right_lat, head_right_lon = destination_point(tip_lat, tip_lon, arrow_bearing - 150, 0.18)
 
         folium.PolyLine(
             locations=[(head_left_lat, head_left_lon), (tip_lat, tip_lon), (head_right_lat, head_right_lon)],
@@ -1244,11 +1241,7 @@ def build_map(nav_points: List[NavPoint],legs: List[LegResult],selected_idx: int
             )
         ).add_to(m)
 
-    min_lat = min(p[0] for p in all_pts)
-    max_lat = max(p[0] for p in all_pts)
-    min_lon = min(p[1] for p in all_pts)
-    max_lon = max(p[1] for p in all_pts)
-    m.fit_bounds([[min_lat, min_lon], [max_lat, max_lon]], padding=(18, 18))
+    m.fit_bounds([[min(lats_all), min(lons_all)], [max(lats_all), max(lons_all)]], padding=(18, 18))
     folium.LayerControl(collapsed=True).add_to(m)
     return m
 
@@ -1325,8 +1318,6 @@ def default_legs():
 def ensure_state():
     if "legs_data" not in st.session_state:
         st.session_state.legs_data = default_legs()
-    if "basemap_choice" not in st.session_state:
-        st.session_state.basemap_choice = "OpenAIP" if st.secrets.get("OPENAIP_KEY", "") else "OpenStreetMap"
 
 
 st.set_page_config(
@@ -1372,10 +1363,8 @@ if not departure:
     st.error("Aérodrome de départ introuvable.")
     st.stop()
 
-weather_bundle = fetch_airport_weather_bundle(dep_icao)
-metar_raw = weather_bundle["metar_raw"]
-metar_decoded = weather_bundle["metar_decoded"]
-taf_raw = weather_bundle["taf_raw"]
+metar_raw, metar_decoded = fetch_metar(dep_icao)
+taf_raw = fetch_taf(dep_icao)
 
 if not GEOMAG_AVAILABLE:
     st.warning("`pygeomag` n'est pas installé : le cap magnétique sera temporairement égal au cap vrai.")
@@ -1513,16 +1502,17 @@ for raw in st.session_state.legs_data:
         )
     )
 
-try:
-    legs, nav_points = build_route(
-        departure,
-        legs_in,
-        tas_kt,
-        departure_metar_decoded=metar_decoded,
-    )
-except ValueError as e:
-    st.error(str(e))
-    st.stop()
+with st.spinner("Calcul de la route et récupération des vents…"):
+    try:
+        legs, nav_points = build_route(
+            departure,
+            legs_in,
+            tas_kt,
+            departure_metar_decoded=metar_decoded,
+        )
+    except ValueError as e:
+        st.error(str(e))
+        st.stop()
 
 selected_leg_idx = st.selectbox(
     "Branche sélectionnée",
@@ -1577,17 +1567,14 @@ with tabs[1]:
         leg_card(leg, selected=(leg.idx == selected_leg_idx))
 
 with tabs[2]:
-    verticale_ft = 1500
-    tdp_ft = 1000
-    
     profile = build_vertical_profile(
         nav_points=nav_points,
         legs=legs,
         climb_rate_fpm=climb_rate_fpm,
         climb_speed_kt=climb_speed_kt,
         descent_rate_fpm=descent_rate_fpm,
-        verticale_ft=verticale_ft,
-        tdp_ft=tdp_ft,
+        verticale_ft=VERTICALE_FT,
+        tdp_ft=TDP_FT,
     )
 
     elev_m = fetch_elevations(
@@ -1628,10 +1615,14 @@ with tabs[2]:
         hovertemplate="Dist %{x:.1f} NM<br>Avion %{y:.0f} ft<extra></extra>",
     ))
 
+    y_air_valid = [y for y in y_air if y is not None]
+    y_air_max = max(y_air_valid) if y_air_valid else 0
+    y_air_min = min(y_air_valid) if y_air_valid else 0
+
     for x, t_txt in profile["toc_marks"]:
         fig.add_annotation(
             x=round(x, 1),
-            y=max(y for y in y_air if y is not None),
+            y=y_air_max,
             text=f"TOC {t_txt}",
             showarrow=False,
             yshift=10,
@@ -1641,7 +1632,7 @@ with tabs[2]:
     for x, t_txt in profile["tod_marks"]:
         fig.add_annotation(
             x=round(x, 1),
-            y=max(y for y in y_air if y is not None),
+            y=y_air_max,
             text=f"TOD {t_txt}",
             showarrow=False,
             yshift=10,
@@ -1710,9 +1701,9 @@ with tabs[2]:
         with c1:
             metric_card("Distance totale", f"{x_terrain[-1]:.1f} NM")
         with c2:
-            metric_card("Alt min avion", f"{min(y for y in y_air if y is not None):.0f} ft")
+            metric_card("Alt min avion", f"{y_air_min:.0f} ft")
         with c3:
-            metric_card("Alt max avion", f"{max(y for y in y_air if y is not None):.0f} ft")
+            metric_card("Alt max avion", f"{y_air_max:.0f} ft")
 
     if terrain_ft and len(x_terrain) == len(terrain_ft):
         air_pairs = [(x, y) for x, y in zip(x_air, y_air) if x is not None and y is not None]
