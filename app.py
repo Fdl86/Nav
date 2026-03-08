@@ -1,7 +1,7 @@
 # app.py
 import math
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Optional, List, Tuple, Dict
 
 import folium
@@ -11,13 +11,26 @@ import requests
 import streamlit as st
 from streamlit_folium import st_folium
 
+try:
+    from pygeomag import GeoMag
+
+    try:
+        _GEOMAG = GeoMag(coefficients_file="wmm/WMM_2025.COF")
+    except Exception:
+        _GEOMAG = GeoMag()
+    GEOMAG_AVAILABLE = True
+except Exception:
+    _GEOMAG = None
+    GEOMAG_AVAILABLE = False
+
 
 APP_TITLE = "Prépa VFR Mobile"
-UA = {"User-Agent": "vfr-prep-mobile/1.4"}
+UA = {"User-Agent": "vfr-prep-mobile/1.5"}
 
 AIRPORTS_CSV_URL = "https://ourairports.com/data/airports.csv"
 AIRPORTS_FALLBACK_CSV_URL = "https://raw.githubusercontent.com/datasets/airport-codes/main/data/airport-codes.csv"
 METAR_API_URL = "https://aviationweather.gov/api/data/metar"
+TAF_API_URL = "https://aviationweather.gov/api/data/taf"
 OPENMETEO_DWD = "https://api.open-meteo.com/v1/dwd-icon"
 OPENMETEO_MF = "https://api.open-meteo.com/v1/meteofrance"
 OPENMETEO_ELEV = "https://api.open-meteo.com/v1/elevation"
@@ -76,8 +89,12 @@ class LegResult:
     start_lon: float
     end_lat: float
     end_lon: float
+    mid_lat: float
+    mid_lon: float
     distance_nm: float
     route_true_deg: float
+    declination_deg: float
+    route_mag_deg: float
     altitude_ft: float
     tas_kt: float
     wind_source: str
@@ -85,9 +102,9 @@ class LegResult:
     wind_speed_kt: float
     drift_deg: float
     heading_true_deg: float
+    heading_mag_deg: float
     gs_kt: float
     ete_min: float
-    eta_utc: datetime
     end_type: str
     arrival_elev_ft: float = 0.0
 
@@ -130,12 +147,10 @@ def load_airports_primary() -> pd.DataFrame:
 @st.cache_data(ttl=60 * 60 * 24, show_spinner=False)
 def load_airports_fallback() -> pd.DataFrame:
     df = pd.read_csv(AIRPORTS_FALLBACK_CSV_URL, low_memory=False)
-
     needed = ["ident", "name", "latitude_deg", "longitude_deg", "elevation_ft", "type", "iso_country"]
     for col in needed:
         if col not in df.columns:
             df[col] = None
-
     df = df[needed].copy()
     df["ident"] = df["ident"].astype(str).str.upper()
     df["name"] = df["name"].fillna("").astype(str)
@@ -207,57 +222,40 @@ def fetch_metar(icao: str) -> Tuple[Optional[str], Optional[dict]]:
         raw = m.get("rawOb") or m.get("raw_text") or m.get("raw")
         decoded = {
             "obs_time": m.get("obsTime") or m.get("receiptTime"),
-            "flight_category": m.get("fltCat"),
             "wind_dir": m.get("wdir"),
             "wind_speed_kt": m.get("wspd"),
-            "visibility": m.get("visib"),
-            "temp_c": m.get("temp"),
-            "dewpoint_c": m.get("dewp"),
-            "qnh_hpa": m.get("altim"),
-            "clouds": m.get("clouds", []),
         }
         return raw, decoded
     except Exception:
         return None, None
 
 
-def metar_human(decoded: Optional[dict]) -> str:
-    if not decoded:
-        return "Pas de METAR disponible"
-
-    parts = []
-    wd = decoded.get("wind_dir")
-    ws = decoded.get("wind_speed_kt")
-    vis = decoded.get("visibility")
-    temp = decoded.get("temp_c")
-    dew = decoded.get("dewpoint_c")
-    qnh = decoded.get("qnh_hpa")
-    flt = decoded.get("flight_category")
-    clouds = decoded.get("clouds") or []
-
-    if wd is not None and ws is not None:
-        if str(wd).upper() == "VRB":
-            parts.append(f"Vent VRB/{float(ws):.0f} kt")
-        else:
-            parts.append(f"Vent {float(wd):03.0f}/{float(ws):.0f} kt")
-    if vis is not None:
-        parts.append(f"Vis {vis}")
-    if temp is not None and dew is not None:
-        parts.append(f"T {temp}°C / Td {dew}°C")
-    if qnh is not None:
-        parts.append(f"QNH {qnh}")
-    if flt:
-        parts.append(f"Cat {flt}")
-
-    cloud_bits = []
-    for c in clouds[:3]:
-        cover = c.get("cover", "?")
-        base = c.get("base", "?")
-        cloud_bits.append(f"{cover} {base} ft")
-    if cloud_bits:
-        parts.append("Nuages " + ", ".join(cloud_bits))
-
-    return " • ".join(parts) if parts else "METAR disponible"
+@st.cache_data(ttl=60 * 10, show_spinner=False)
+def fetch_taf(icao: str) -> Optional[str]:
+    icao = (icao or "").strip().upper()
+    if not icao:
+        return None
+    try:
+        r = session().get(
+            TAF_API_URL,
+            params={"ids": icao, "format": "json"},
+            timeout=15,
+        )
+        if r.status_code == 204:
+            return None
+        r.raise_for_status()
+        js = r.json()
+        if not js:
+            return None
+        item = js[0]
+        return (
+            item.get("rawTAF")
+            or item.get("raw_text")
+            or item.get("raw")
+            or item.get("taf")
+        )
+    except Exception:
+        return None
 
 
 def ft_to_m(ft: float) -> float:
@@ -577,6 +575,24 @@ def leg_mean_wind_now(
     return "Aucune donnée vent", 0.0, 0.0
 
 
+def magnetic_declination_deg(lat: float, lon: float, alt_ft: float = 0.0) -> float:
+    if not GEOMAG_AVAILABLE or _GEOMAG is None:
+        return 0.0
+    try:
+        year_fraction = datetime.now(timezone.utc).year + (
+            datetime.now(timezone.utc).timetuple().tm_yday / 365.25
+        )
+        result = _GEOMAG.calculate(glat=lat, glon=lon, alt=ft_to_m(alt_ft) / 1000.0, time=year_fraction)
+        return float(result.d)
+    except Exception:
+        return 0.0
+
+
+def true_to_magnetic(true_deg: float, declination_deg: float) -> float:
+    # variation Est = on soustrait, Ouest = on ajoute
+    return deg_norm(true_deg - declination_deg)
+
+
 def wind_correction(course_deg: float, tas_kt: float, wind_from_deg: float, wind_speed_kt: float):
     delta = math.radians(shortest_angle_deg(wind_from_deg, course_deg))
     ratio = 0.0 if tas_kt <= 0 else max(-0.9999, min(0.9999, (wind_speed_kt / tas_kt) * math.sin(delta)))
@@ -591,7 +607,6 @@ def wind_correction(course_deg: float, tas_kt: float, wind_from_deg: float, wind
 def build_route(
     departure: Aerodrome,
     legs_in: List[LegInput],
-    offblock_utc: datetime,
     tas_kt: float,
     departure_metar_decoded: Optional[dict] = None,
 ) -> Tuple[List[LegResult], List[NavPoint]]:
@@ -599,7 +614,6 @@ def build_route(
     nav_points: List[NavPoint] = [NavPoint(departure.icao, departure.lat, departure.lon, departure.elev_ft, departure.icao)]
 
     prev = nav_points[0]
-    elapsed_min = 0.0
 
     for idx, leg in enumerate(legs_in, start=1):
         if leg.leg_type == "aerodrome":
@@ -622,9 +636,14 @@ def build_route(
             leg.altitude_ft,
             metar_decoded=departure_metar_decoded,
         )
-        drift, heading, gs = wind_correction(route_true, tas_kt, wind_dir, wind_speed)
+        drift, heading_true, gs = wind_correction(route_true, tas_kt, wind_dir, wind_speed)
         ete_min = distance_nm / gs * 60.0
-        eta_utc = offblock_utc + timedelta(minutes=elapsed_min + ete_min)
+
+        mid_lat = (prev.lat + end_pt.lat) / 2.0
+        mid_lon = (prev.lon + end_pt.lon) / 2.0
+        decl = magnetic_declination_deg(mid_lat, mid_lon, leg.altitude_ft)
+        route_mag = true_to_magnetic(route_true, decl)
+        heading_mag = true_to_magnetic(heading_true, decl)
 
         legs_out.append(
             LegResult(
@@ -636,18 +655,22 @@ def build_route(
                 start_lon=prev.lon,
                 end_lat=end_pt.lat,
                 end_lon=end_pt.lon,
+                mid_lat=mid_lat,
+                mid_lon=mid_lon,
                 distance_nm=distance_nm,
                 route_true_deg=route_true,
+                declination_deg=decl,
+                route_mag_deg=route_mag,
                 altitude_ft=leg.altitude_ft,
                 tas_kt=tas_kt,
                 wind_source=wind_source,
                 wind_dir_deg=wind_dir,
                 wind_speed_kt=wind_speed,
                 drift_deg=drift,
-                heading_true_deg=heading,
+                heading_true_deg=heading_true,
+                heading_mag_deg=heading_mag,
                 gs_kt=gs,
                 ete_min=ete_min,
-                eta_utc=eta_utc,
                 end_type=leg.end_type,
                 arrival_elev_ft=end_pt.elev_ft,
             )
@@ -655,7 +678,6 @@ def build_route(
 
         nav_points.append(end_pt)
         prev = end_pt
-        elapsed_min += ete_min
 
     return legs_out, nav_points
 
@@ -677,22 +699,9 @@ def fetch_elevations(lats: Tuple[float, ...], lons: Tuple[float, ...]):
         return None
 
 
-def build_profile_points(nav_points: List[NavPoint], n_per_leg: int = 18):
-    pts = [(nav_points[0].lat, nav_points[0].lon)]
-    for a, b in zip(nav_points, nav_points[1:]):
-        seg = interpolate_line(a.lat, a.lon, b.lat, b.lon, n=n_per_leg)
-        pts.extend(seg[1:])
-    return pts
-
-
-def cumulative_distances_nm(points: List[Tuple[float, float]]):
-    d = [0.0]
-    for i in range(1, len(points)):
-        d.append(d[-1] + haversine_nm(points[i - 1][0], points[i - 1][1], points[i][0], points[i][1]))
-    return d
-
-
-def arrival_target_alt_ft(arr_elev_ft: float, end_type: str, verticale_ft: float, tdp_ft: float):
+def arrival_target_alt_ft(arr_elev_ft: float, end_type: str, is_aerodrome: bool, verticale_ft: float, tdp_ft: float, cruise_alt_ft: float):
+    if not is_aerodrome or arr_elev_ft <= 0:
+        return cruise_alt_ft
     if end_type == "verticale":
         return arr_elev_ft + verticale_ft
     if end_type == "tour_de_piste":
@@ -701,49 +710,93 @@ def arrival_target_alt_ft(arr_elev_ft: float, end_type: str, verticale_ft: float
 
 
 def build_vertical_profile(
-    dep_elev_ft: float,
-    arr_elev_ft: float,
-    end_type: str,
-    cruise_alt_ft: float,
-    route_d_nm: List[float],
+    nav_points: List[NavPoint],
+    legs: List[LegResult],
     climb_rate_fpm: float,
     climb_speed_kt: float,
     descent_rate_fpm: float,
-    descent_speed_kt: float,
     verticale_ft: float,
     tdp_ft: float,
 ):
-    arr_target = arrival_target_alt_ft(arr_elev_ft, end_type, verticale_ft, tdp_ft)
-    climb_ft = max(0.0, cruise_alt_ft - dep_elev_ft)
-    descent_ft = max(0.0, cruise_alt_ft - arr_target)
+    route_x: List[float] = []
+    terrain_route_pts: List[Tuple[float, float]] = []
+    alt_profile: List[float] = []
+    toc_marks: List[float] = []
+    tod_marks: List[float] = []
 
-    climb_time_min = 0.0 if climb_rate_fpm <= 0 else climb_ft / climb_rate_fpm
-    descent_time_min = 0.0 if descent_rate_fpm <= 0 else descent_ft / descent_rate_fpm
+    cumulative_nm = 0.0
+    current_alt = nav_points[0].elev_ft
 
-    toc_nm = climb_speed_kt * (climb_time_min / 60.0)
-    tod_nm = max(0.0, route_d_nm[-1] - descent_speed_kt * (descent_time_min / 60.0))
+    for i, leg in enumerate(legs):
+        n = max(12, min(40, int(round(leg.distance_nm * 1.5))))
+        seg_pts = interpolate_line(leg.start_lat, leg.start_lon, leg.end_lat, leg.end_lon, n=n)
 
-    if toc_nm > tod_nm:
-        mid = route_d_nm[-1] / 2.0
-        toc_nm = min(toc_nm, mid)
-        tod_nm = max(tod_nm, mid)
+        cruise_alt = leg.altitude_ft
+        end_target_alt = arrival_target_alt_ft(
+            arr_elev_ft=leg.arrival_elev_ft,
+            end_type=leg.end_type,
+            is_aerodrome=(leg.leg_type == "aerodrome"),
+            verticale_ft=verticale_ft,
+            tdp_ft=tdp_ft,
+            cruise_alt_ft=cruise_alt,
+        )
 
-    alt_profile = []
-    for d in route_d_nm:
-        if d <= toc_nm and toc_nm > 0:
-            alt = dep_elev_ft + (cruise_alt_ft - dep_elev_ft) * (d / toc_nm)
-        elif d >= tod_nm and route_d_nm[-1] > tod_nm:
-            frac = (d - tod_nm) / max(route_d_nm[-1] - tod_nm, 1e-6)
-            alt = cruise_alt_ft + (arr_target - cruise_alt_ft) * frac
+        delta1 = cruise_alt - current_alt
+        if delta1 >= 0:
+            d1_nm = climb_speed_kt * ((abs(delta1) / max(climb_rate_fpm, 1)) / 60.0)
         else:
-            alt = cruise_alt_ft
-        alt_profile.append(alt)
+            d1_nm = 0.0 if descent_rate_fpm <= 0 else leg.gs_kt * ((abs(delta1) / descent_rate_fpm) / 60.0)
+
+        delta2 = end_target_alt - cruise_alt
+        if delta2 >= 0:
+            d2_nm = climb_speed_kt * ((abs(delta2) / max(climb_rate_fpm, 1)) / 60.0)
+        else:
+            d2_nm = 0.0 if descent_rate_fpm <= 0 else leg.gs_kt * ((abs(delta2) / descent_rate_fpm) / 60.0)
+
+        if d1_nm + d2_nm > leg.distance_nm:
+            scale = leg.distance_nm / max(d1_nm + d2_nm, 1e-6)
+            d1_nm *= scale
+            d2_nm *= scale
+
+        toc_nm = cumulative_nm + d1_nm if abs(delta1) > 1 else None
+        tod_nm = cumulative_nm + max(leg.distance_nm - d2_nm, d1_nm) if abs(delta2) > 1 else None
+        if toc_nm is not None:
+            toc_marks.append(toc_nm)
+        if tod_nm is not None and d2_nm > 0.01:
+            tod_marks.append(tod_nm)
+
+        seg_x_local = [round((j / n) * leg.distance_nm, 1) for j in range(n + 1)]
+
+        for j, (pt, x_local) in enumerate(zip(seg_pts, seg_x_local)):
+            x_global = round(cumulative_nm + x_local, 1)
+            if i == 0 and j == 0:
+                route_x.append(x_global)
+                terrain_route_pts.append(pt)
+            elif j > 0:
+                route_x.append(x_global)
+                terrain_route_pts.append(pt)
+
+            if x_local <= d1_nm and d1_nm > 1e-6:
+                frac = x_local / d1_nm
+                alt = current_alt + (cruise_alt - current_alt) * frac
+            elif x_local >= leg.distance_nm - d2_nm and d2_nm > 1e-6:
+                frac = (x_local - (leg.distance_nm - d2_nm)) / d2_nm
+                alt = cruise_alt + (end_target_alt - cruise_alt) * frac
+            else:
+                alt = cruise_alt
+
+            if not alt_profile or (i > 0 or j > 0):
+                alt_profile.append(round(alt))
+
+        current_alt = end_target_alt
+        cumulative_nm = round(cumulative_nm + leg.distance_nm, 1)
 
     return {
-        "toc_nm": toc_nm,
-        "tod_nm": tod_nm,
-        "arr_target_ft": arr_target,
+        "route_x_nm": route_x,
+        "terrain_route_pts": terrain_route_pts,
         "alt_profile_ft": alt_profile,
+        "toc_marks_nm": toc_marks,
+        "tod_marks_nm": tod_marks,
     }
 
 
@@ -860,10 +913,10 @@ def leg_card(leg: LegResult, selected: bool = False):
                 Branche {leg.idx} — {leg.start_name} → {leg.end_name}
             </div>
             <div style="font-size:0.95rem;line-height:1.65;">
-                RM {route3(leg.route_true_deg)} • HDG {route3(leg.heading_true_deg)} • Dérive {leg.drift_deg:+.1f}°<br>
-                Dist {leg.distance_nm:.1f} NM • Alt {int(leg.altitude_ft)} ft • GS {leg.gs_kt:.0f} kt<br>
-                Vent {route3(leg.wind_dir_deg)}/{leg.wind_speed_kt:.0f} kt ({leg.wind_source})<br>
-                ETE {leg.ete_min:.1f} min • ETA {leg.eta_utc.strftime("%H:%M")} UTC • Fin {leg.end_type.replace("_", " ")}
+                RV {route3(leg.route_true_deg)} • CM {route3(leg.heading_mag_deg)} • Dérive {leg.drift_deg:+.1f}°<br>
+                Dist {leg.distance_nm:.1f} NM • Alt {int(round(leg.altitude_ft))} ft • GS {leg.gs_kt:.0f} kt<br>
+                Vent {route3(leg.wind_dir_deg)}/{leg.wind_speed_kt:.0f} kt ({leg.wind_source}) • Δmag {leg.declination_deg:+.1f}°<br>
+                ETE {leg.ete_min:.1f} min • Fin {leg.end_type.replace("_", " ")}
             </div>
         </div>
         """,
@@ -908,7 +961,7 @@ div[data-testid="stExpander"] details summary p {font-size: 1rem;}
 ensure_state()
 
 st.title("🛩️ Prépa VFR mobile")
-st.caption("Départ OACI, METAR, branches simples, carte openAIP, vent au moment de la génération, profil vertical.")
+st.caption("Départ OACI, METAR/TAF, branches simples, carte openAIP, cap magnétique, profil vertical.")
 
 openaip_key = st.secrets.get("OPENAIP_KEY", "")
 
@@ -916,29 +969,17 @@ with st.expander("Vol", expanded=True):
     c1, c2, c3 = st.columns(3)
 
     with c1:
-        dep_icao = st.text_input("Départ OACI", value="LFMT").strip().upper()
-        off_str = st.text_input(
-            "Heure OFF UTC (YYYY-MM-DD HH:MM)",
-            value=datetime.utcnow().strftime("%Y-%m-%d %H:%M"),
-        )
+        dep_icao = st.text_input("Départ OACI", value="LFBI").strip().upper()
 
     with c2:
-        tas_kt = st.number_input("TAS (kt)", min_value=40, max_value=220, value=105, step=1)
-        fuel_burn_lph = st.number_input("Conso (L/h)", min_value=1.0, max_value=200.0, value=28.0, step=0.5)
+        tas_kt = st.number_input("TAS (kt)", min_value=40, max_value=220, value=100, step=1)
+        fuel_burn_lph = st.number_input("Conso (L/h)", min_value=1, max_value=200, value=20, step=1)
         reserve_min = st.number_input("Réserve (min)", min_value=0, max_value=180, value=45, step=5)
 
     with c3:
-        cruise_alt_ft = st.number_input("Altitude croisière (ft)", min_value=500, max_value=18000, value=3500, step=100)
-        climb_rate_fpm = st.number_input("Taux montée (ft/min)", min_value=100, max_value=3000, value=500, step=50)
-        climb_speed_kt = st.number_input("Vitesse montée (kt)", min_value=40, max_value=200, value=75, step=1)
+        climb_rate_fpm = st.number_input("Taux montée (ft/min)", min_value=100, max_value=3000, value=840, step=10)
+        climb_speed_kt = st.number_input("Vitesse montée (kt)", min_value=40, max_value=200, value=65, step=1)
         descent_rate_fpm = st.number_input("Taux descente (ft/min)", min_value=100, max_value=3000, value=500, step=50)
-        descent_speed_kt = st.number_input("Vitesse descente (kt)", min_value=40, max_value=250, value=100, step=1)
-
-try:
-    offblock_utc = datetime.strptime(off_str, "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
-except Exception:
-    st.error("Format heure OFF invalide. Utilise YYYY-MM-DD HH:MM")
-    st.stop()
 
 departure = resolve_airport(dep_icao)
 if not departure:
@@ -946,37 +987,30 @@ if not departure:
     st.stop()
 
 metar_raw, metar_decoded = fetch_metar(dep_icao)
+taf_raw = fetch_taf(dep_icao)
+
+if not GEOMAG_AVAILABLE:
+    st.warning("`pygeomag` n'est pas installé : le cap magnétique sera temporairement égal au cap vrai.")
 
 with st.expander("Terrain de départ", expanded=True):
     c1, c2 = st.columns([1, 2])
     with c1:
         metric_card("OACI", departure.icao)
         metric_card("Nom", departure.name)
-        metric_card("Position", f"{departure.lat:.4f}, {departure.lon:.4f}")
-        metric_card("Élévation", f"{departure.elev_ft:.0f} ft")
     with c2:
+        st.markdown("**METAR**")
         if metar_raw:
             st.code(metar_raw, language="text")
-            st.info(metar_human(metar_decoded))
         else:
-            st.warning("Pas de METAR disponible pour ce terrain.")
+            st.warning("METAR indisponible.")
+        st.markdown("**TAF**")
+        if taf_raw:
+            st.code(taf_raw, language="text")
+        else:
+            st.warning("TAF indisponible.")
 
 with st.expander("Branches", expanded=True):
-    st.caption("Pour un point tournant : route vraie + distance + altitude. Pour un terrain : OACI arrivée.")
-
-    if st.button("➕ Ajouter une branche", use_container_width=True):
-        st.session_state.legs_data.append(
-            {
-                "leg_type": "point_tournant",
-                "route_true_deg": 0.0,
-                "distance_nm": 10.0,
-                "altitude_ft": cruise_alt_ft,
-                "end_type": "standard",
-                "target_icao": "",
-                "label": f"PT {len(st.session_state.legs_data) + 1}",
-            }
-        )
-        st.rerun()
+    st.caption("Ordre chronologique conservé. Ajout en bas pour garder un flux naturel départ → arrivée.")
 
     delete_idx = None
 
@@ -1014,7 +1048,7 @@ with st.expander("Branches", expanded=True):
                     value=leg["label"],
                     key=f"label_{i}",
                 )
-                st.caption(f"Route affichée : {route3(leg['route_true_deg'])}")
+                st.caption(f"RV affichée : {route3(leg['route_true_deg'])}")
             else:
                 leg["target_icao"] = st.text_input(
                     "OACI arrivée",
@@ -1049,6 +1083,20 @@ with st.expander("Branches", expanded=True):
             st.session_state.legs_data = default_legs()
         st.rerun()
 
+    if st.button("➕ Ajouter une branche", use_container_width=True):
+        st.session_state.legs_data.append(
+            {
+                "leg_type": "point_tournant",
+                "route_true_deg": 0.0,
+                "distance_nm": 10.0,
+                "altitude_ft": 3500.0,
+                "end_type": "standard",
+                "target_icao": "",
+                "label": f"PT {len(st.session_state.legs_data) + 1}",
+            }
+        )
+        st.rerun()
+
 legs_in = []
 for raw in st.session_state.legs_data:
     legs_in.append(
@@ -1067,7 +1115,6 @@ try:
     legs, nav_points = build_route(
         departure,
         legs_in,
-        offblock_utc,
         tas_kt,
         departure_metar_decoded=metar_decoded,
     )
@@ -1091,13 +1138,13 @@ with tabs[0]:
     c1, c2 = st.columns(2)
     with c1:
         metric_card("Branche", f"{sel.start_name} → {sel.end_name}")
-        metric_card("Route vraie", route3(sel.route_true_deg))
-        metric_card("Cap vrai", route3(sel.heading_true_deg))
+        metric_card("RV", route3(sel.route_true_deg))
+        metric_card("CM", route3(sel.heading_mag_deg))
         metric_card("Dérive", f"{sel.drift_deg:+.1f}°")
     with c2:
         metric_card("Vent", f"{route3(sel.wind_dir_deg)}/{sel.wind_speed_kt:.0f} kt")
         metric_card("Source vent", sel.wind_source)
-        metric_card("Altitude", f"{int(sel.altitude_ft)} ft")
+        metric_card("Altitude", f"{int(round(sel.altitude_ft))} ft")
         metric_card("GS", f"{sel.gs_kt:.0f} kt")
 
 with tabs[1]:
@@ -1124,47 +1171,55 @@ with tabs[2]:
     verticale_ft = st.number_input("Hauteur verticale terrain (ft sol)", min_value=500, max_value=3000, value=1500, step=100)
     tdp_ft = st.number_input("Hauteur tour de piste (ft sol)", min_value=500, max_value=2000, value=1000, step=100)
 
-    profile_pts = build_profile_points(nav_points, n_per_leg=18)
-    route_d = cumulative_distances_nm(profile_pts)
-
-    elev_m = fetch_elevations(tuple(p[0] for p in profile_pts), tuple(p[1] for p in profile_pts))
-    if elev_m is None:
-        terrain_ft = [0.0] * len(profile_pts)
-        st.warning("Relief indisponible en ligne, profil affiché sans terrain.")
-    else:
-        terrain_ft = [m_to_ft(x) for x in elev_m]
-
-    last_leg = legs[-1]
     profile = build_vertical_profile(
-        dep_elev_ft=departure.elev_ft,
-        arr_elev_ft=last_leg.arrival_elev_ft,
-        end_type=last_leg.end_type,
-        cruise_alt_ft=cruise_alt_ft,
-        route_d_nm=route_d,
+        nav_points=nav_points,
+        legs=legs,
         climb_rate_fpm=climb_rate_fpm,
         climb_speed_kt=climb_speed_kt,
         descent_rate_fpm=descent_rate_fpm,
-        descent_speed_kt=descent_speed_kt,
         verticale_ft=verticale_ft,
         tdp_ft=tdp_ft,
     )
 
+    elev_m = fetch_elevations(
+        tuple(p[0] for p in profile["terrain_route_pts"]),
+        tuple(p[1] for p in profile["terrain_route_pts"]),
+    )
+
+    if elev_m is None:
+        terrain_ft = [0] * len(profile["terrain_route_pts"])
+        st.warning("Relief indisponible en ligne, profil affiché sans terrain.")
+    else:
+        terrain_ft = [int(round(m_to_ft(x))) for x in elev_m]
+
+    x_vals = [round(x, 1) for x in profile["route_x_nm"]]
+    y_air = [int(round(y)) for y in profile["alt_profile_ft"]]
+
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=route_d,
+        x=x_vals,
         y=terrain_ft,
         mode="lines",
-        name="Relief",
+        name="Sol",
         fill="tozeroy",
+        line=dict(color="#8B5A2B", width=2),
+        fillcolor="rgba(139, 90, 43, 0.45)",
+        hovertemplate="Dist %{x:.1f} NM<br>Sol %{y:.0f} ft<extra></extra>",
     ))
     fig.add_trace(go.Scatter(
-        x=route_d,
-        y=profile["alt_profile_ft"],
+        x=x_vals,
+        y=y_air,
         mode="lines",
-        name="Altitude avion",
+        name="Avion",
+        line=dict(width=3),
+        hovertemplate="Dist %{x:.1f} NM<br>Avion %{y:.0f} ft<extra></extra>",
     ))
-    fig.add_vline(x=profile["toc_nm"], line_dash="dash", annotation_text="Fin montée")
-    fig.add_vline(x=profile["tod_nm"], line_dash="dash", annotation_text="Début descente")
+
+    for x in profile["toc_marks_nm"]:
+        fig.add_vline(x=round(x, 1), line_dash="dash", annotation_text="Fin montée")
+    for x in profile["tod_marks_nm"]:
+        fig.add_vline(x=round(x, 1), line_dash="dot", annotation_text="Début descente")
+
     fig.update_layout(
         height=430,
         margin=dict(l=20, r=20, t=20, b=20),
@@ -1174,16 +1229,17 @@ with tabs[2]:
     )
     st.plotly_chart(fig, use_container_width=True)
 
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        metric_card("Fin montée", f"{profile['toc_nm']:.1f} NM")
-    with c2:
-        metric_card("Début descente", f"{profile['tod_nm']:.1f} NM")
-    with c3:
-        metric_card("Altitude arrivée cible", f"{profile['arr_target_ft']:.0f} ft")
+    if x_vals:
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            metric_card("Distance totale", f"{x_vals[-1]:.1f} NM")
+        with c2:
+            metric_card("Alt min avion", f"{min(y_air):.0f} ft")
+        with c3:
+            metric_card("Alt max avion", f"{max(y_air):.0f} ft")
 
     if terrain_ft:
-        min_margin = min(a - t for a, t in zip(profile["alt_profile_ft"], terrain_ft))
+        min_margin = min(a - t for a, t in zip(y_air, terrain_ft))
         if min_margin < 500:
             st.error(f"Marge verticale minimale faible : {min_margin:.0f} ft")
         else:
@@ -1191,28 +1247,26 @@ with tabs[2]:
 
 with tabs[3]:
     st.subheader(f"Départ {departure.icao}")
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        metric_card("Terrain", departure.name)
-    with c2:
-        metric_card("Position", f"{departure.lat:.4f}, {departure.lon:.4f}")
-    with c3:
-        metric_card("Élévation", f"{departure.elev_ft:.0f} ft")
+    st.markdown(f"**{departure.name}**")
 
+    st.markdown("**METAR**")
     if metar_raw:
         st.code(metar_raw, language="text")
-        st.info(metar_human(metar_decoded))
     else:
-        st.warning("METAR indisponible pour ce terrain.")
+        st.warning("METAR indisponible.")
 
-    sel = legs[selected_leg_idx - 1]
-    st.subheader(f"Vent branche {sel.idx}")
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        metric_card("Source", sel.wind_source)
-    with c2:
-        metric_card("Vent retenu", f"{route3(sel.wind_dir_deg)}/{sel.wind_speed_kt:.0f} kt")
-    with c3:
-        metric_card("Heure vent", generation_hour_utc().strftime("%Y-%m-%d %H:%M UTC"))
+    st.markdown("**TAF**")
+    if taf_raw:
+        st.code(taf_raw, language="text")
+    else:
+        st.warning("TAF indisponible.")
 
-st.caption("Installation : pip install streamlit streamlit-folium folium requests pandas plotly")
+    st.markdown("### Vent par branche")
+    hour_txt = generation_hour_utc().strftime("%Y-%m-%d %H:%M UTC")
+    for leg in legs:
+        st.markdown(
+            f"**Vent branche {leg.idx}** : {route3(leg.wind_dir_deg)}/{leg.wind_speed_kt:.0f} kt "
+            f"({leg.wind_source}) — {hour_txt}"
+        )
+
+st.caption("Installation : pip install streamlit streamlit-folium folium requests pandas plotly pygeomag")
