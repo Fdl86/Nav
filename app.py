@@ -734,8 +734,8 @@ def build_vertical_profile(
     aircraft_x: List[Optional[float]] = []
     aircraft_y: List[Optional[float]] = []
 
-    vt_marks: List[Tuple[float, float, float]] = []
-    tdp_marks: List[Tuple[float, float, float]] = []
+    vt_marks: List[Tuple[float, float, float, str]] = []
+    tdp_marks: List[Tuple[float, float, float, str]] = []
 
     toc_marks: List[Tuple[float, str]] = []
     tod_marks: List[Tuple[float, str]] = []
@@ -809,11 +809,12 @@ def build_vertical_profile(
         leg_end_x = round(cumulative_nm + leg.distance_nm, 1)
 
         if is_arrival_aerodrome:
+            terrain_label = leg.end_name
             if leg.end_type == "verticale":
-                vt_marks.append((leg_end_x, terrain_alt, terrain_alt + verticale_ft))
+                vt_marks.append((leg_end_x, terrain_alt, terrain_alt + verticale_ft, terrain_label))
             elif leg.end_type == "tour_de_piste":
-                tdp_marks.append((leg_end_x, terrain_alt, terrain_alt + tdp_ft))
-
+                tdp_marks.append((leg_end_x, terrain_alt, terrain_alt + tdp_ft, terrain_label))
+                
         for j, (pt, x_local) in enumerate(zip(seg_pts, seg_x_local)):
             x_global = round(cumulative_nm + x_local, 1)
 
@@ -1330,7 +1331,7 @@ with tabs[2]:
             font=dict(color="purple"),
         )
     # VT / TDP : marqueurs à la distance exacte du terrain, bornés entre sol et altitude d'intégration
-    for x, y0, y1 in profile["vt_marks"]:
+    for x, y0, y1, terrain_name in profile["vt_marks"]:
         fig.add_shape(
             type="line",
             x0=round(x, 1),
@@ -1342,13 +1343,14 @@ with tabs[2]:
         fig.add_annotation(
             x=round(x, 1),
             y=round(y1),
-            text="VT",
+            text=f"VT<br>{terrain_name} {round(y0):.0f} ft",
             showarrow=False,
             yshift=10,
             font=dict(color="orange"),
+            align="center",
         )
 
-    for x, y0, y1 in profile["tdp_marks"]:
+    for x, y0, y1, terrain_name in profile["tdp_marks"]:
         fig.add_shape(
             type="line",
             x0=round(x, 1),
@@ -1360,10 +1362,11 @@ with tabs[2]:
         fig.add_annotation(
             x=round(x, 1),
             y=round(y1),
-            text="TDP",
+            text=f"TDP<br>{terrain_name} {round(y0):.0f} ft",
             showarrow=False,
             yshift=10,
             font=dict(color="deepskyblue"),
+            align="center",
         )
 
     fig.update_layout(
