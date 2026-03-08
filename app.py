@@ -285,6 +285,16 @@ def shortest_angle_deg(a: float, b: float) -> float:
 def route3(v: float) -> str:
     return f"{int(round(v)) % 360:03d}"
 
+def format_minutes_mmss(minutes_value: float) -> str:
+    total_seconds = max(0, int(round(minutes_value * 60)))
+    mm = total_seconds // 60
+    ss = total_seconds % 60
+    return f"{mm:02d}:{ss:02d}"
+
+def drift_label(drift_deg: float) -> str:
+    if abs(drift_deg) < 0.05:
+        return "nulle"
+    return "droite" if drift_deg > 0 else "gauche"
 
 def haversine_nm(lat1, lon1, lat2, lon2):
     r = 6371000.0
@@ -900,6 +910,11 @@ def metric_card(label: str, value: str):
 def leg_card(leg: LegResult, selected: bool = False):
     border = "#ef4444" if selected else "rgba(128,128,128,0.22)"
     bg = "rgba(239,68,68,0.05)" if selected else "rgba(255,255,255,0.03)"
+
+    cv_true = leg.heading_true_deg
+    cm_mag = leg.heading_mag_deg
+    dm_txt = f"{abs(leg.declination_deg):.1f}°{'E' if leg.declination_deg >= 0 else 'W'}"
+
     st.markdown(
         f"""
         <div style="
@@ -912,11 +927,18 @@ def leg_card(leg: LegResult, selected: bool = False):
             <div style="font-size:1rem;font-weight:700;margin-bottom:6px;">
                 Branche {leg.idx} — {leg.start_name} → {leg.end_name}
             </div>
-            <div style="font-size:0.95rem;line-height:1.65;">
-                RV {route3(leg.route_true_deg)} • CM {route3(leg.heading_mag_deg)} • Dérive {leg.drift_deg:+.1f}°<br>
-                Dist {leg.distance_nm:.1f} NM • Alt {int(round(leg.altitude_ft))} ft • GS {leg.gs_kt:.0f} kt<br>
-                Vent {route3(leg.wind_dir_deg)}/{leg.wind_speed_kt:.0f} kt ({leg.wind_source}) • Δmag {leg.declination_deg:+.1f}°<br>
-                ETE {leg.ete_min:.1f} min • Fin {leg.end_type.replace("_", " ")}
+            <div style="font-size:0.95rem;line-height:1.75;">
+                RV {route3(leg.route_true_deg)} •
+                Dérive {leg.drift_deg:+.1f}° ({drift_label(leg.drift_deg)}) •
+                Cv {route3(cv_true)} •
+                Dm {dm_txt} •
+                Cm {route3(cm_mag)}<br>
+                Dist {leg.distance_nm:.1f} NM •
+                Alt {int(round(leg.altitude_ft))} ft •
+                GS {leg.gs_kt:.0f} kt •
+                ETE {format_minutes_mmss(leg.ete_min)}<br>
+                Vent {route3(leg.wind_dir_deg)}/{leg.wind_speed_kt:.0f} kt ({leg.wind_source}) •
+                Fin {leg.end_type.replace("_", " ")}
             </div>
         </div>
         """,
