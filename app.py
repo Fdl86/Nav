@@ -961,24 +961,57 @@ def build_map(nav_points: List[NavPoint], legs: List[LegResult], selected_idx: i
             tooltip=f"Branche {leg.idx}: {leg.start_name} → {leg.end_name}",
         ).add_to(m)
 
-        if leg.end_type == "verticale":
-            folium.Marker(
-                [leg.end_lat, leg.end_lon],
-                icon=folium.DivIcon(html="""
-                    <div style="font-size:14px;font-weight:700;color:#f59e0b;background:white;border:1px solid #f59e0b;border-radius:999px;padding:2px 6px;">
-                        V
-                    </div>
-                """)
-            ).add_to(m)
-        elif leg.end_type == "tour_de_piste":
-            folium.Marker(
-                [leg.end_lat, leg.end_lon],
-                icon=folium.DivIcon(html="""
-                    <div style="font-size:12px;font-weight:700;color:#2563eb;background:white;border:1px solid #2563eb;border-radius:999px;padding:2px 6px;">
-                        TDP
-                    </div>
-                """)
-            ).add_to(m)
+    if leg.end_type == "verticale":
+        folium.Marker(
+            [leg.end_lat, leg.end_lon],
+            icon=folium.DivIcon(
+                icon_size=(0, 0),
+                icon_anchor=(0, 0),
+                html="""
+                <div style="
+                    font-size:14px;
+                    font-weight:700;
+                    color:#f59e0b;
+                    background:transparent;
+                    border:none;
+                    padding:0;
+                    text-shadow:
+                        -1px -1px 0 rgba(255,255,255,0.95),
+                         1px -1px 0 rgba(255,255,255,0.95),
+                        -1px  1px 0 rgba(255,255,255,0.95),
+                         1px  1px 0 rgba(255,255,255,0.95);
+                ">
+                    VT
+                </div>
+                """
+            )
+        ).add_to(m)
+    
+    elif leg.end_type == "tour_de_piste":
+        folium.Marker(
+            [leg.end_lat, leg.end_lon],
+            icon=folium.DivIcon(
+                icon_size=(0, 0),
+                icon_anchor=(0, 0),
+                html="""
+                <div style="
+                    font-size:12px;
+                    font-weight:700;
+                    color:#00a6ff;
+                    background:transparent;
+                    border:none;
+                    padding:0;
+                    text-shadow:
+                        -1px -1px 0 rgba(255,255,255,0.95),
+                         1px -1px 0 rgba(255,255,255,0.95),
+                        -1px  1px 0 rgba(255,255,255,0.95),
+                         1px  1px 0 rgba(255,255,255,0.95);
+                ">
+                    TDP
+                </div>
+                """
+            )
+        ).add_to(m)
 
         # -------- Vent V2 : flèche + label pour toutes les branches --------
         # alternance du côté pour limiter les collisions entre branches proches
@@ -1034,25 +1067,32 @@ def build_map(nav_points: List[NavPoint], legs: List[LegResult], selected_idx: i
             side_sign=side_sign,
         )
 
-        folium.Marker(
-            [label_lat, label_lon],
-            tooltip=f"Vent {route3(leg.wind_dir_deg)}/{leg.wind_speed_kt:.0f} kt",
-            icon=folium.DivIcon(html=f"""
-                <div style="
-                    font-size:11px;
-                    font-weight:700;
-                    color:#1e3a8a;
-                    background:rgba(255,255,255,0.92);
-                    border:1px solid rgba(30,58,138,0.35);
-                    border-radius:8px;
-                    padding:1px 5px;
-                    white-space:nowrap;
-                    box-shadow:0 1px 2px rgba(0,0,0,0.15);
-                ">
-                    {route3(leg.wind_dir_deg)}/{leg.wind_speed_kt:.0f}
-                </div>
-            """)
-        ).add_to(m)
+    folium.Marker(
+        [label_lat, label_lon],
+        tooltip=f"Vent {route3(leg.wind_dir_deg)}/{leg.wind_speed_kt:.0f} kt",
+        icon=folium.DivIcon(
+            icon_size=(0, 0),
+            icon_anchor=(0, 0),
+            html=f"""
+            <div style="
+                font-size:11px;
+                font-weight:700;
+                color:#0f3b82;
+                background:transparent;
+                border:none;
+                padding:0;
+                white-space:nowrap;
+                text-shadow:
+                    -1px -1px 0 rgba(255,255,255,0.95),
+                     1px -1px 0 rgba(255,255,255,0.95),
+                    -1px  1px 0 rgba(255,255,255,0.95),
+                     1px  1px 0 rgba(255,255,255,0.95);
+            ">
+                {route3(leg.wind_dir_deg)}/{leg.wind_speed_kt:.0f}
+            </div>
+            """
+        )
+    ).add_to(m)
 
     min_lat = min(p[0] for p in all_pts)
     max_lat = max(p[0] for p in all_pts)
