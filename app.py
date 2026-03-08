@@ -704,6 +704,26 @@ def wind_correction(course_deg: float, tas_kt: float, wind_from_deg: float, wind
     heading = deg_norm(course_deg + drift)
     return drift, heading, gs
 
+def magnetic_declination_deg(lat: float, lon: float, alt_ft: float = 0.0) -> float:
+    if not GEOMAG_AVAILABLE or _GEOMAG is None:
+        return 0.0
+    try:
+        now_utc = datetime.now(timezone.utc)
+        year_fraction = now_utc.year + (now_utc.timetuple().tm_yday / 365.25)
+        result = _GEOMAG.calculate(
+            glat=lat,
+            glon=lon,
+            alt=ft_to_m(alt_ft) / 1000.0,
+            time=year_fraction,
+        )
+        return float(result.d)
+    except Exception:
+        return 0.0
+
+def true_to_magnetic(true_deg: float, declination_deg: float) -> float:
+    # variation Est = on soustrait, Ouest = on ajoute
+    return deg_norm(true_deg - declination_deg)
+
 def build_route(
     departure: Aerodrome,
     legs_in: List[LegInput],
