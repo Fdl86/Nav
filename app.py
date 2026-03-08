@@ -868,6 +868,49 @@ def build_vertical_profile(
 def openaip_tiles(api_key: str):
     return f"https://api.tiles.openaip.net/api/data/openaip/{{z}}/{{x}}/{{y}}.png?apiKey={api_key}"
 
+def wind_to_deg(wind_from_deg: float) -> float:
+    return deg_norm(wind_from_deg + 180.0)
+
+
+def offset_point_perpendicular(
+    lat1: float,
+    lon1: float,
+    lat2: float,
+    lon2: float,
+    lat: float,
+    lon: float,
+    offset_nm: float,
+    side_sign: int,
+) -> Tuple[float, float]:
+    """
+    Décale un point perpendiculairement à la branche.
+    side_sign = +1 ou -1 pour alterner le côté.
+    """
+    mid_lat_rad = math.radians(lat)
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+
+    # Conversion locale approximative lat/lon -> NM
+    x_nm = dlon * 60.0 * math.cos(mid_lat_rad)
+    y_nm = dlat * 60.0
+
+    norm = math.hypot(x_nm, y_nm)
+    if norm < 1e-9:
+        return lat, lon
+
+    # vecteur perpendiculaire unitaire
+    px = side_sign * (-y_nm / norm)
+    py = side_sign * (x_nm / norm)
+
+    dx_nm = px * offset_nm
+    dy_nm = py * offset_nm
+
+    out_lat = lat + (dy_nm / 60.0)
+    out_lon = lon + (dx_nm / (60.0 * max(math.cos(mid_lat_rad), 1e-6)))
+    return out_lat, out_lon
+
+def destination_point_nm(lat_deg: float, lon_deg: float, bearing_deg: float, distance_nm: float) -> Tuple[float, float]:
+    return destination_point(lat_deg, lon_deg, bearing_deg, distance_nm)
 
 def build_map(nav_points: List[NavPoint], legs: List[LegResult], selected_idx: int, openaip_key: str):
     all_pts = [(p.lat, p.lon) for p in nav_points]
@@ -905,9 +948,11 @@ def build_map(nav_points: List[NavPoint], legs: List[LegResult], selected_idx: i
             icon=folium.Icon(color=color, icon=icon, prefix="fa"),
         ).add_to(m)
 
+    # Overlay vent pour éviter superposition avec la ligne de branche
     for leg in legs:
         seg = interpolate_line(leg.start_lat, leg.start_lon, leg.end_lat, leg.end_lon, n=28)
         selected = leg.idx == selected_idx
+
         folium.PolyLine(
             locations=seg,
             color="#ef4444" if selected else "#0f172a",
@@ -935,6 +980,80 @@ def build_map(nav_points: List[NavPoint], legs: List[LegResult], selected_idx: i
                 """)
             ).add_to(m)
 
+        # -------- Vent V2 : flèche + label pour toutes les branches --------
+        # alternance du côté pour limiter les collisions entre branches proches
+        side_sign = 1 if (leg.idx % 2 == 1) else -1
+
+        # offset légèrement plus important sur la branche sélectionnée
+        offset_nm = 1.2 if selected else 0.8
+        anchor_lat, anchor_lon = offset_point_perpendicular(
+            leg.start_lat,
+            leg.start_lon,
+            leg.end_lat,
+            leg.end_lon,
+            leg.mid_lat,
+            leg.mid_lon,
+            offset_nm=offset_nm,
+            side_sign=side_sign,
+        )
+
+        # flèche montrant où va le vent, texte gardé en "vent venant du"
+        arrow_bearing = wind_to_deg(leg.wind_dir_deg)
+
+        # longueur fixe, légèrement augmentée si vent plus fort
+        arrow_len_nm = min(1.0, 0.45 + 0.03 * leg.wind_speed_kt)
+        tip_lat, tip_lon = destination_point_nm(anchor_lat, anchor_lon, arrow_bearing, arrow_len_nm)
+
+        folium.PolyLine(
+            locations=[(anchor_lat, anchor_lon), (tip_lat, tip_lon)],
+            color="#2563eb",
+            weight=3,
+            opacity=0.9,
+        ).add_to(m)
+
+        # petite tête de flèche
+        head_left_lat, head_left_lon = destination_point_nm(tip_lat, tip_lon, arrow_bearing + 150, 0.18)
+        head_right_lat, head_right_lon = destination_point_nm(tip_lat, tip_lon, arrow_bearing - 150, 0.18)
+
+        folium.PolyLine(
+            locations=[(head_left_lat, head_left_lon), (tip_lat, tip_lon), (head_right_lat, head_right_lon)],
+            color="#2563eb",
+            weight=3,
+            opacity=0.9,
+        ).add_to(m)
+
+        # label décalé encore un peu plus loin pour éviter la superposition avec la flèche
+        label_lat, label_lon = offset_point_perpendicular(
+            leg.start_lat,
+            leg.start_lon,
+            leg.end_lat,
+            leg.end_lon,
+            anchor_lat,
+            anchor_lon,
+            offset_nm=0.45,
+            side_sign=side_sign,
+        )
+
+        folium.Marker(
+            [label_lat, label_lon],
+            tooltip=f"Vent {route3(leg.wind_dir_deg)}/{leg.wind_speed_kt:.0f} kt",
+            icon=folium.DivIcon(html=f"""
+                <div style="
+                    font-size:11px;
+                    font-weight:700;
+                    color:#1e3a8a;
+                    background:rgba(255,255,255,0.92);
+                    border:1px solid rgba(30,58,138,0.35);
+                    border-radius:8px;
+                    padding:1px 5px;
+                    white-space:nowrap;
+                    box-shadow:0 1px 2px rgba(0,0,0,0.15);
+                ">
+                    {route3(leg.wind_dir_deg)}/{leg.wind_speed_kt:.0f}
+                </div>
+            """)
+        ).add_to(m)
+
     min_lat = min(p[0] for p in all_pts)
     max_lat = max(p[0] for p in all_pts)
     min_lon = min(p[1] for p in all_pts)
@@ -942,7 +1061,6 @@ def build_map(nav_points: List[NavPoint], legs: List[LegResult], selected_idx: i
     m.fit_bounds([[min_lat, min_lon], [max_lat, max_lon]], padding=(18, 18))
     folium.LayerControl(collapsed=True).add_to(m)
     return m
-
 
 def metric_card(label: str, value: str):
     st.markdown(
@@ -960,7 +1078,6 @@ def metric_card(label: str, value: str):
         """,
         unsafe_allow_html=True,
     )
-
 
 def leg_card(leg: LegResult, selected: bool = False):
     border = "#ef4444" if selected else "rgba(128,128,128,0.22)"
