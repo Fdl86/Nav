@@ -690,6 +690,20 @@ def prefetch_winds_for_geometries(
             wind_by_leg[geom["idx"]] = ("Aucune donnée vent", 0.0, 0.0)
 
     return wind_by_leg
+    
+def wind_correction(course_deg: float, tas_kt: float, wind_from_deg: float, wind_speed_kt: float):
+    delta = math.radians(shortest_angle_deg(wind_from_deg, course_deg))
+    ratio = 0.0 if tas_kt <= 0 else max(
+        -0.9999,
+        min(0.9999, (wind_speed_kt / tas_kt) * math.sin(delta))
+    )
+    wca = math.asin(ratio)
+    gs = tas_kt * math.cos(wca) - wind_speed_kt * math.cos(delta)
+    gs = max(gs, 20.0)
+    drift = math.degrees(wca)
+    heading = deg_norm(course_deg + drift)
+    return drift, heading, gs
+
 def build_route(
     departure: Aerodrome,
     legs_in: List[LegInput],
