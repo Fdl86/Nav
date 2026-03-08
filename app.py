@@ -1077,17 +1077,27 @@ with st.expander("Terrain de départ", expanded=True):
     with c2:
         metric_card("Nom", departure.name)
 
-    st.markdown("**METAR**")
-    if metar_raw:
-        st.markdown(f"```\n{metar_raw}\n```")
-    else:
-        st.warning("METAR indisponible.")
+    st.markdown("### Météo")
 
-    st.markdown("**TAF**")
-    if taf_raw:
-        st.markdown(f"```\n{taf_raw}\n```")
-    else:
-        st.warning("TAF indisponible.")
+    weather_block = f"""
+    <div style="
+        background-color: rgba(255,255,255,0.03);
+        padding:14px;
+        border-radius:10px;
+        border:1px solid rgba(255,255,255,0.08);
+        font-family: monospace;
+        white-space: pre-wrap;
+        line-height:1.4;
+    ">
+    <b>METAR</b>
+    {metar_raw if metar_raw else "METAR indisponible."}
+    
+    <b>TAF</b>
+    {taf_raw if taf_raw else "TAF indisponible."}
+        </div>
+        """
+
+    st.markdown(weather_block, unsafe_allow_html=True)
 
 with st.expander("Branches", expanded=True):
     st.caption("Ordre chronologique conservé. Ajout en bas pour garder un flux naturel départ → arrivée.")
