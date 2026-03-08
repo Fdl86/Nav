@@ -1017,7 +1017,6 @@ def build_map(nav_points: List[NavPoint], legs: List[LegResult], selected_idx: i
         # alternance du côté pour limiter les collisions entre branches proches
         side_sign = 1 if (leg.idx % 2 == 1) else -1
 
-        # offset légèrement plus important sur la branche sélectionnée
         offset_nm = 1.2 if selected else 0.8
         anchor_lat, anchor_lon = offset_point_perpendicular(
             leg.start_lat,
@@ -1030,10 +1029,7 @@ def build_map(nav_points: List[NavPoint], legs: List[LegResult], selected_idx: i
             side_sign=side_sign,
         )
 
-        # flèche montrant où va le vent, texte gardé en "vent venant du"
         arrow_bearing = wind_to_deg(leg.wind_dir_deg)
-
-        # longueur fixe, légèrement augmentée si vent plus fort
         arrow_len_nm = min(1.0, 0.45 + 0.03 * leg.wind_speed_kt)
         tip_lat, tip_lon = destination_point_nm(anchor_lat, anchor_lon, arrow_bearing, arrow_len_nm)
 
@@ -1044,7 +1040,6 @@ def build_map(nav_points: List[NavPoint], legs: List[LegResult], selected_idx: i
             opacity=0.9,
         ).add_to(m)
 
-        # petite tête de flèche
         head_left_lat, head_left_lon = destination_point_nm(tip_lat, tip_lon, arrow_bearing + 150, 0.18)
         head_right_lat, head_right_lon = destination_point_nm(tip_lat, tip_lon, arrow_bearing - 150, 0.18)
 
@@ -1055,7 +1050,6 @@ def build_map(nav_points: List[NavPoint], legs: List[LegResult], selected_idx: i
             opacity=0.9,
         ).add_to(m)
 
-        # label décalé encore un peu plus loin pour éviter la superposition avec la flèche
         label_lat, label_lon = offset_point_perpendicular(
             leg.start_lat,
             leg.start_lon,
@@ -1067,32 +1061,32 @@ def build_map(nav_points: List[NavPoint], legs: List[LegResult], selected_idx: i
             side_sign=side_sign,
         )
 
-    folium.Marker(
-        [label_lat, label_lon],
-        tooltip=f"Vent {route3(leg.wind_dir_deg)}/{leg.wind_speed_kt:.0f} kt",
-        icon=folium.DivIcon(
-            icon_size=(0, 0),
-            icon_anchor=(0, 0),
-            html=f"""
-            <div style="
-                font-size:11px;
-                font-weight:700;
-                color:#0f3b82;
-                background:transparent;
-                border:none;
-                padding:0;
-                white-space:nowrap;
-                text-shadow:
-                    -1px -1px 0 rgba(255,255,255,0.95),
-                     1px -1px 0 rgba(255,255,255,0.95),
-                    -1px  1px 0 rgba(255,255,255,0.95),
-                     1px  1px 0 rgba(255,255,255,0.95);
-            ">
-                {route3(leg.wind_dir_deg)}/{leg.wind_speed_kt:.0f}
-            </div>
-            """
-        )
-    ).add_to(m)
+        folium.Marker(
+            [label_lat, label_lon],
+            tooltip=f"Vent {route3(leg.wind_dir_deg)}/{leg.wind_speed_kt:.0f} kt",
+            icon=folium.DivIcon(
+                icon_size=(0, 0),
+                icon_anchor=(0, 0),
+                html=f"""
+                <div style="
+                    font-size:11px;
+                    font-weight:700;
+                    color:#0f3b82;
+                    background:transparent;
+                    border:none;
+                    padding:0;
+                    white-space:nowrap;
+                    text-shadow:
+                        -1px -1px 0 rgba(255,255,255,0.95),
+                         1px -1px 0 rgba(255,255,255,0.95),
+                        -1px  1px 0 rgba(255,255,255,0.95),
+                         1px  1px 0 rgba(255,255,255,0.95);
+                ">
+                    {route3(leg.wind_dir_deg)}/{leg.wind_speed_kt:.0f}
+                </div>
+                """
+            )
+        ).add_to(m)
 
     min_lat = min(p[0] for p in all_pts)
     max_lat = max(p[0] for p in all_pts)
