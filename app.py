@@ -915,23 +915,37 @@ def offset_point_perpendicular(
 def destination_point_nm(lat_deg: float, lon_deg: float, bearing_deg: float, distance_nm: float) -> Tuple[float, float]:
     return destination_point(lat_deg, lon_deg, bearing_deg, distance_nm)
 
-def build_map(nav_points: List[NavPoint], legs: List[LegResult], selected_idx: int, openaip_key: str):
+def build_map(nav_points: List[NavPoint],legs: List[LegResult],selected_idx: int,openaip_key: str,basemap: str,):
     all_pts = [(p.lat, p.lon) for p in nav_points]
     center = [sum(x[0] for x in all_pts) / len(all_pts), sum(x[1] for x in all_pts) / len(all_pts)]
 
     m = folium.Map(location=center, zoom_start=8, control_scale=True, tiles=None)
 
-    if openaip_key:
+    if basemap == "OpenAIP":
+        if openaip_key:
+            folium.TileLayer(
+                tiles=openaip_tiles(openaip_key),
+                attr="openAIP",
+                name="openAIP",
+                overlay=False,
+                control=True,
+                max_zoom=14,
+            ).add_to(m)
+        else:
+            folium.TileLayer("OpenStreetMap", name="OSM").add_to(m)
+    elif basemap == "OpenStreetMap":
+        folium.TileLayer("OpenStreetMap", name="OSM", overlay=False, control=True).add_to(m)
+    elif basemap == "OpenTopoMap":
         folium.TileLayer(
-            tiles=openaip_tiles(openaip_key),
-            attr="openAIP",
-            name="openAIP",
+            tiles="https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
+            attr="OpenTopoMap",
+            name="OpenTopoMap",
             overlay=False,
             control=True,
-            max_zoom=14,
+            max_zoom=17,
         ).add_to(m)
     else:
-        folium.TileLayer("OpenStreetMap", name="OSM").add_to(m)
+        folium.TileLayer("OpenStreetMap", name="OSM", overlay=False, control=True).add_to(m)
 
     dep = nav_points[0]
     folium.Marker(
@@ -1378,7 +1392,13 @@ selected_leg_idx = st.selectbox(
 tabs = st.tabs(["Carte", "Navigation", "Profil vertical", "Météo"])
 
 with tabs[0]:
-    fmap = build_map(nav_points, legs, selected_leg_idx, openaip_key)
+    basemap = st.selectbox(
+            "Fond de carte",
+            ["OpenAIP", "OpenStreetMap", "OpenTopoMap"],
+            key="basemap_choice",
+            width="stretch",
+        )
+    fmap = build_map(nav_points, legs, selected_leg_idx, openaip_key, basemap)
     st_folium(fmap, width="stretch", height=560)
 
     sel = legs[selected_leg_idx - 1]
