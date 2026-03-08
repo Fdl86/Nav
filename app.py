@@ -1070,20 +1070,22 @@ if not GEOMAG_AVAILABLE:
 
 with st.expander("Terrain de départ", expanded=True):
     c1, c2 = st.columns([1, 3])
+
     with c1:
         metric_card("OACI", departure.icao)
+
     with c2:
         metric_card("Nom", departure.name)
 
     st.markdown("**METAR**")
     if metar_raw:
-        st.code(metar_raw, language="text")
+        st.markdown(f"```\n{metar_raw}\n```")
     else:
         st.warning("METAR indisponible.")
 
     st.markdown("**TAF**")
     if taf_raw:
-        st.code(taf_raw, language="text")
+        st.markdown(f"```\n{taf_raw}\n```")
     else:
         st.warning("TAF indisponible.")
 
