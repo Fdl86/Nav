@@ -13,7 +13,7 @@ from streamlit_folium import st_folium
 
 
 APP_TITLE = "Prépa VFR Mobile"
-UA = {"User-Agent": "vfr-prep-mobile/1.3"}
+UA = {"User-Agent": "vfr-prep-mobile/1.4"}
 
 AIRPORTS_CSV_URL = "https://ourairports.com/data/airports.csv"
 AIRPORTS_FALLBACK_CSV_URL = "https://raw.githubusercontent.com/datasets/airport-codes/main/data/airport-codes.csv"
@@ -25,7 +25,6 @@ OPENMETEO_ELEV = "https://api.open-meteo.com/v1/elevation"
 END_TYPES = ["standard", "verticale", "tour_de_piste"]
 LEG_TYPES = ["point_tournant", "aerodrome"]
 
-# Approximation des hauteurs AMSL pour interpolation verticale
 DWD_LEVELS_M = {
     1000: 110, 975: 320, 950: 500, 925: 800, 900: 1000, 850: 1500,
     800: 1900, 700: 3000, 600: 4200, 500: 5600, 400: 7200, 300: 9200,
@@ -106,12 +105,6 @@ def fetch_json(url: str, params: Optional[dict] = None, timeout: int = 20):
     return r.json()
 
 
-def fetch_csv(url: str, timeout: int = 30) -> pd.DataFrame:
-    r = session().get(url, timeout=timeout)
-    r.raise_for_status()
-    return pd.read_csv(pd.io.common.StringIO(r.text), low_memory=False)
-
-
 @st.cache_data(ttl=60 * 60 * 24, show_spinner=False)
 def load_airports_primary() -> pd.DataFrame:
     df = pd.read_csv(AIRPORTS_CSV_URL, low_memory=False)
@@ -137,22 +130,13 @@ def load_airports_primary() -> pd.DataFrame:
 @st.cache_data(ttl=60 * 60 * 24, show_spinner=False)
 def load_airports_fallback() -> pd.DataFrame:
     df = pd.read_csv(AIRPORTS_FALLBACK_CSV_URL, low_memory=False)
-    # Schéma différent du repo datasets/airport-codes
-    cols = {
-        "ident": "ident",
-        "name": "name",
-        "latitude_deg": "latitude_deg",
-        "longitude_deg": "longitude_deg",
-        "elevation_ft": "elevation_ft",
-        "type": "type",
-        "iso_country": "iso_country",
-    }
-    existing = [c for c in cols if c in df.columns]
-    df = df[existing].copy()
-    for c in cols:
-        if c not in df.columns:
-            df[c] = None
-    df = df[list(cols.keys())]
+
+    needed = ["ident", "name", "latitude_deg", "longitude_deg", "elevation_ft", "type", "iso_country"]
+    for col in needed:
+        if col not in df.columns:
+            df[col] = None
+
+    df = df[needed].copy()
     df["ident"] = df["ident"].astype(str).str.upper()
     df["name"] = df["name"].fillna("").astype(str)
     df["latitude_deg"] = pd.to_numeric(df["latitude_deg"], errors="coerce")
@@ -167,7 +151,6 @@ def resolve_airport(icao: str) -> Optional[Aerodrome]:
     if not icao:
         return None
 
-    # Source principale
     try:
         df = load_airports_primary()
         hit = df[df["ident"] == icao]
@@ -183,7 +166,6 @@ def resolve_airport(icao: str) -> Optional[Aerodrome]:
     except Exception:
         pass
 
-    # Fallback
     try:
         df = load_airports_fallback()
         hit = df[df["ident"] == icao]
@@ -220,6 +202,7 @@ def fetch_metar(icao: str) -> Tuple[Optional[str], Optional[dict]]:
         js = r.json()
         if not js:
             return None, None
+
         m = js[0]
         raw = m.get("rawOb") or m.get("raw_text") or m.get("raw")
         decoded = {
@@ -306,13 +289,13 @@ def route3(v: float) -> str:
 
 
 def haversine_nm(lat1, lon1, lat2, lon2):
-    R = 6371000.0
+    r = 6371000.0
     p1 = math.radians(lat1)
     p2 = math.radians(lat2)
     dp = math.radians(lat2 - lat1)
     dl = math.radians(lon2 - lon1)
     a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
-    return m_to_nm(2 * R * math.asin(math.sqrt(a)))
+    return m_to_nm(2 * r * math.asin(math.sqrt(a)))
 
 
 def initial_bearing_deg(lat1, lon1, lat2, lon2):
@@ -325,8 +308,8 @@ def initial_bearing_deg(lat1, lon1, lat2, lon2):
 
 
 def destination_point(lat_deg: float, lon_deg: float, bearing_deg: float, distance_nm: float):
-    R = 6371000.0
-    d = nm_to_m(distance_nm) / R
+    r = 6371000.0
+    d = nm_to_m(distance_nm) / r
     brg = math.radians(bearing_deg)
     lat1 = math.radians(lat_deg)
     lon1 = math.radians(lon_deg)
@@ -339,7 +322,6 @@ def destination_point(lat_deg: float, lon_deg: float, bearing_deg: float, distan
         math.sin(brg) * math.sin(d) * math.cos(lat1),
         math.cos(d) - math.sin(lat1) * math.sin(lat2),
     )
-
     return math.degrees(lat2), ((math.degrees(lon2) + 540) % 360) - 180
 
 
@@ -367,6 +349,30 @@ def wind_from_uv(u: float, v: float):
     return direction_from, speed
 
 
+def metar_surface_wind(decoded: Optional[dict]) -> Optional[Tuple[float, float]]:
+    if not decoded:
+        return None
+    wd = decoded.get("wind_dir")
+    ws = decoded.get("wind_speed_kt")
+    if wd is None or ws is None:
+        return None
+    try:
+        if str(wd).upper() == "VRB":
+            return None
+        return float(wd), float(ws)
+    except Exception:
+        return None
+
+
+def nearest_hour(dt: datetime):
+    dt = dt.astimezone(timezone.utc)
+    return dt.replace(minute=0, second=0, microsecond=0)
+
+
+def generation_hour_utc() -> datetime:
+    return nearest_hour(datetime.now(timezone.utc))
+
+
 def pick_levels(target_alt_m: float, level_map: Dict[int, float]):
     levels = sorted(level_map.items(), key=lambda x: x[1])
     if target_alt_m <= levels[0][1]:
@@ -379,175 +385,194 @@ def pick_levels(target_alt_m: float, level_map: Dict[int, float]):
     return levels[-1][0], levels[-1][0]
 
 
-def nearest_hour(dt: datetime):
-    dt = dt.astimezone(timezone.utc)
-    return dt.replace(minute=0, second=0, microsecond=0)
-
-
-@st.cache_data(ttl=60 * 15, show_spinner=False)
-def fetch_wind_pressure_batch(
+@st.cache_data(ttl=60 * 10, show_spinner=False)
+def fetch_openmeteo_hour_block(
     source: str,
     lats: Tuple[float, ...],
     lons: Tuple[float, ...],
-    valid_hour_iso: str,
-    target_alt_ft: float,
+    hourly_vars: Tuple[str, ...],
 ):
-    target_alt_m = ft_to_m(target_alt_ft)
-    valid_dt = datetime.fromisoformat(valid_hour_iso)
-
-    if source == "ICON-D2":
-        url = OPENMETEO_DWD
-        level_map = DWD_LEVELS_M
-    else:
-        url = OPENMETEO_MF
-        level_map = MF_LEVELS_M
-
-    p_low, p_high = pick_levels(target_alt_m, level_map)
-
-    hourly = [
-        f"wind_speed_{p_low}hPa",
-        f"wind_direction_{p_low}hPa",
-        f"geopotential_height_{p_low}hPa",
-    ]
-    if p_high != p_low:
-        hourly += [
-            f"wind_speed_{p_high}hPa",
-            f"wind_direction_{p_high}hPa",
-            f"geopotential_height_{p_high}hPa",
-        ]
-
-    params = {
-        "latitude": ",".join(f"{x:.6f}" for x in lats),
-        "longitude": ",".join(f"{x:.6f}" for x in lons),
-        "hourly": ",".join(hourly),
-        "wind_speed_unit": "kn",
-        "timezone": "UTC",
-        "start_hour": valid_dt.strftime("%Y-%m-%dT%H:%M"),
-        "end_hour": (valid_dt + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M"),
-        "cell_selection": "nearest",
-    }
-
-    try:
-        js = fetch_json(url, params=params, timeout=25)
-    except Exception:
-        return None
-
-    items = js if isinstance(js, list) else [js]
-    out = []
-
-    for item in items:
-        h = item.get("hourly", {})
-
-        def first(name):
-            arr = h.get(name, [])
-            return arr[0] if arr else None
-
-        spd_low = first(f"wind_speed_{p_low}hPa")
-        dir_low = first(f"wind_direction_{p_low}hPa")
-        z_low = first(f"geopotential_height_{p_low}hPa")
-
-        if spd_low is None or dir_low is None or z_low is None:
-            return None
-
-        if p_low == p_high:
-            out.append({"wind_dir_deg": float(dir_low), "wind_speed_kt": float(spd_low)})
-            continue
-
-        spd_high = first(f"wind_speed_{p_high}hPa")
-        dir_high = first(f"wind_direction_{p_high}hPa")
-        z_high = first(f"geopotential_height_{p_high}hPa")
-        if spd_high is None or dir_high is None or z_high is None:
-            return None
-
-        z1 = float(z_low)
-        z2 = float(z_high)
-        t = 0.0 if abs(z2 - z1) < 1e-6 else max(0.0, min(1.0, (target_alt_m - z1) / (z2 - z1)))
-
-        u1, v1 = uv_from_wind_from(float(spd_low), float(dir_low))
-        u2, v2 = uv_from_wind_from(float(spd_high), float(dir_high))
-        u = u1 + (u2 - u1) * t
-        v = v1 + (v2 - v1) * t
-        wd, ws = wind_from_uv(u, v)
-        out.append({"wind_dir_deg": wd, "wind_speed_kt": ws})
-
-    return out
-
-
-@st.cache_data(ttl=60 * 15, show_spinner=False)
-def fetch_wind_surface_batch(
-    source: str,
-    lats: Tuple[float, ...],
-    lons: Tuple[float, ...],
-    valid_hour_iso: str,
-):
-    valid_dt = datetime.fromisoformat(valid_hour_iso)
     url = OPENMETEO_DWD if source == "ICON-D2" else OPENMETEO_MF
     params = {
         "latitude": ",".join(f"{x:.6f}" for x in lats),
         "longitude": ",".join(f"{x:.6f}" for x in lons),
-        "hourly": "wind_speed_10m,wind_direction_10m",
+        "hourly": ",".join(hourly_vars),
         "wind_speed_unit": "kn",
         "timezone": "UTC",
-        "start_hour": valid_dt.strftime("%Y-%m-%dT%H:%M"),
-        "end_hour": (valid_dt + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M"),
+        "forecast_days": 2,
         "cell_selection": "nearest",
     }
-    try:
-        js = fetch_json(url, params=params, timeout=25)
-    except Exception:
+    js = fetch_json(url, params=params, timeout=25)
+    return js if isinstance(js, list) else [js]
+
+
+def get_hour_index(hourly_time: List[str], target_dt: datetime) -> Optional[int]:
+    target_key = target_dt.strftime("%Y-%m-%dT%H:%M")
+    for i, t in enumerate(hourly_time):
+        if t == target_key:
+            return i
+    return None
+
+
+def interpolate_pressure_wind_for_item(item: dict, hour_idx: int, target_alt_ft: float, level_map: Dict[int, float]):
+    target_alt_m = ft_to_m(target_alt_ft)
+    p_low, p_high = pick_levels(target_alt_m, level_map)
+    hourly = item.get("hourly", {})
+
+    def at(var_name: str):
+        arr = hourly.get(var_name, [])
+        if hour_idx is None or hour_idx < 0 or hour_idx >= len(arr):
+            return None
+        return arr[hour_idx]
+
+    spd_low = at(f"wind_speed_{p_low}hPa")
+    dir_low = at(f"wind_direction_{p_low}hPa")
+    z_low = at(f"geopotential_height_{p_low}hPa")
+    if spd_low is None or dir_low is None or z_low is None:
         return None
 
-    items = js if isinstance(js, list) else [js]
-    out = []
-    for item in items:
-        h = item.get("hourly", {})
-        spd = (h.get("wind_speed_10m") or [None])[0]
-        wdir = (h.get("wind_direction_10m") or [None])[0]
-        if spd is None or wdir is None:
-            return None
-        out.append({"wind_dir_deg": float(wdir), "wind_speed_kt": float(spd)})
-    return out
+    if p_low == p_high:
+        return float(dir_low), float(spd_low)
+
+    spd_high = at(f"wind_speed_{p_high}hPa")
+    dir_high = at(f"wind_direction_{p_high}hPa")
+    z_high = at(f"geopotential_height_{p_high}hPa")
+    if spd_high is None or dir_high is None or z_high is None:
+        return None
+
+    z1 = float(z_low)
+    z2 = float(z_high)
+    t = 0.0 if abs(z2 - z1) < 1e-6 else max(0.0, min(1.0, (target_alt_m - z1) / (z2 - z1)))
+
+    u1, v1 = uv_from_wind_from(float(spd_low), float(dir_low))
+    u2, v2 = uv_from_wind_from(float(spd_high), float(dir_high))
+    u = u1 + (u2 - u1) * t
+    v = v1 + (v2 - v1) * t
+    wd, ws = wind_from_uv(u, v)
+    return wd, ws
 
 
-def mean_vector_wind(batch: List[dict]) -> Tuple[float, float]:
-    u_sum, v_sum = 0.0, 0.0
-    for b in batch:
-        u, v = uv_from_wind_from(b["wind_speed_kt"], b["wind_dir_deg"])
+def extract_surface_wind_for_item(item: dict, hour_idx: int):
+    hourly = item.get("hourly", {})
+    spd_arr = hourly.get("wind_speed_10m", [])
+    dir_arr = hourly.get("wind_direction_10m", [])
+    if hour_idx is None or hour_idx < 0:
+        return None
+    if hour_idx >= len(spd_arr) or hour_idx >= len(dir_arr):
+        return None
+    spd = spd_arr[hour_idx]
+    wdir = dir_arr[hour_idx]
+    if spd is None or wdir is None:
+        return None
+    return float(wdir), float(spd)
+
+
+def mean_vector_from_pairs(pairs: List[Tuple[float, float]]) -> Optional[Tuple[float, float]]:
+    if not pairs:
+        return None
+    u_sum = 0.0
+    v_sum = 0.0
+    for wd, ws in pairs:
+        u, v = uv_from_wind_from(ws, wd)
         u_sum += u
         v_sum += v
-    u_avg = u_sum / len(batch)
-    v_avg = v_sum / len(batch)
+    u_avg = u_sum / len(pairs)
+    v_avg = v_sum / len(pairs)
     return wind_from_uv(u_avg, v_avg)
 
 
-def leg_mean_wind(points: List[Tuple[float, float]], valid_dt: datetime, altitude_ft: float):
+def leg_mean_wind_now(
+    points: List[Tuple[float, float]],
+    altitude_ft: float,
+    metar_decoded: Optional[dict] = None,
+) -> Tuple[str, float, float]:
     lats = tuple(p[0] for p in points)
     lons = tuple(p[1] for p in points)
-    valid_hour = nearest_hour(valid_dt).replace(tzinfo=None).isoformat(timespec="minutes")
+    gen_hour = generation_hour_utc()
 
-    # 1) Essai pression/niveau ICON
-    batch = fetch_wind_pressure_batch("ICON-D2", lats, lons, valid_hour, altitude_ft)
-    if batch:
-        wd, ws = mean_vector_wind(batch)
-        return "ICON-D2 niveau", wd, ws
+    try:
+        p_low, p_high = pick_levels(ft_to_m(altitude_ft), DWD_LEVELS_M)
+        vars_icon = [
+            f"wind_speed_{p_low}hPa",
+            f"wind_direction_{p_low}hPa",
+            f"geopotential_height_{p_low}hPa",
+        ]
+        if p_high != p_low:
+            vars_icon += [
+                f"wind_speed_{p_high}hPa",
+                f"wind_direction_{p_high}hPa",
+                f"geopotential_height_{p_high}hPa",
+            ]
+        items = fetch_openmeteo_hour_block("ICON-D2", lats, lons, tuple(vars_icon))
+        pairs = []
+        for item in items:
+            hour_idx = get_hour_index(item.get("hourly", {}).get("time", []), gen_hour)
+            pair = interpolate_pressure_wind_for_item(item, hour_idx, altitude_ft, DWD_LEVELS_M)
+            if pair:
+                pairs.append(pair)
+        avg = mean_vector_from_pairs(pairs)
+        if avg:
+            return "ICON-D2 niveau", avg[0], avg[1]
+    except Exception:
+        pass
 
-    # 2) Essai pression/niveau AROME
-    batch = fetch_wind_pressure_batch("AROME", lats, lons, valid_hour, altitude_ft)
-    if batch:
-        wd, ws = mean_vector_wind(batch)
-        return "AROME niveau", wd, ws
+    try:
+        p_low, p_high = pick_levels(ft_to_m(altitude_ft), MF_LEVELS_M)
+        vars_mf = [
+            f"wind_speed_{p_low}hPa",
+            f"wind_direction_{p_low}hPa",
+            f"geopotential_height_{p_low}hPa",
+        ]
+        if p_high != p_low:
+            vars_mf += [
+                f"wind_speed_{p_high}hPa",
+                f"wind_direction_{p_high}hPa",
+                f"geopotential_height_{p_high}hPa",
+            ]
+        items = fetch_openmeteo_hour_block("AROME", lats, lons, tuple(vars_mf))
+        pairs = []
+        for item in items:
+            hour_idx = get_hour_index(item.get("hourly", {}).get("time", []), gen_hour)
+            pair = interpolate_pressure_wind_for_item(item, hour_idx, altitude_ft, MF_LEVELS_M)
+            if pair:
+                pairs.append(pair)
+        avg = mean_vector_from_pairs(pairs)
+        if avg:
+            return "AROME niveau", avg[0], avg[1]
+    except Exception:
+        pass
 
-    # 3) Fallback surface ICON
-    batch = fetch_wind_surface_batch("ICON-D2", lats, lons, valid_hour)
-    if batch:
-        wd, ws = mean_vector_wind(batch)
-        return "ICON-D2 10m", wd, ws
+    try:
+        items = fetch_openmeteo_hour_block("ICON-D2", lats, lons, ("wind_speed_10m", "wind_direction_10m"))
+        pairs = []
+        for item in items:
+            hour_idx = get_hour_index(item.get("hourly", {}).get("time", []), gen_hour)
+            pair = extract_surface_wind_for_item(item, hour_idx)
+            if pair:
+                pairs.append(pair)
+        avg = mean_vector_from_pairs(pairs)
+        if avg:
+            return "ICON-D2 10m", avg[0], avg[1]
+    except Exception:
+        pass
 
-    # 4) Fallback surface AROME
-    batch = fetch_wind_surface_batch("AROME", lats, lons, valid_hour)
-    if batch:
-        wd, ws = mean_vector_wind(batch)
-        return "AROME 10m", wd, ws
+    try:
+        items = fetch_openmeteo_hour_block("AROME", lats, lons, ("wind_speed_10m", "wind_direction_10m"))
+        pairs = []
+        for item in items:
+            hour_idx = get_hour_index(item.get("hourly", {}).get("time", []), gen_hour)
+            pair = extract_surface_wind_for_item(item, hour_idx)
+            if pair:
+                pairs.append(pair)
+        avg = mean_vector_from_pairs(pairs)
+        if avg:
+            return "AROME 10m", avg[0], avg[1]
+    except Exception:
+        pass
+
+    metar_pair = metar_surface_wind(metar_decoded)
+    if metar_pair:
+        return "METAR départ", metar_pair[0], metar_pair[1]
 
     return "Aucune donnée vent", 0.0, 0.0
 
@@ -568,6 +593,7 @@ def build_route(
     legs_in: List[LegInput],
     offblock_utc: datetime,
     tas_kt: float,
+    departure_metar_decoded: Optional[dict] = None,
 ) -> Tuple[List[LegResult], List[NavPoint]]:
     legs_out: List[LegResult] = []
     nav_points: List[NavPoint] = [NavPoint(departure.icao, departure.lat, departure.lon, departure.elev_ft, departure.icao)]
@@ -590,9 +616,12 @@ def build_route(
             label = leg.label.strip() if leg.label.strip() else f"PT {idx}"
             end_pt = NavPoint(label, lat2, lon2, 0.0, "")
 
-        est_mid = offblock_utc + timedelta(minutes=elapsed_min + (distance_nm / max(tas_kt, 40.0) * 30.0))
         sample = interpolate_line(prev.lat, prev.lon, end_pt.lat, end_pt.lon, n=4)
-        wind_source, wind_dir, wind_speed = leg_mean_wind(sample, est_mid, leg.altitude_ft)
+        wind_source, wind_dir, wind_speed = leg_mean_wind_now(
+            sample,
+            leg.altitude_ft,
+            metar_decoded=departure_metar_decoded,
+        )
         drift, heading, gs = wind_correction(route_true, tas_kt, wind_dir, wind_speed)
         ete_min = distance_nm / gs * 60.0
         eta_utc = offblock_utc + timedelta(minutes=elapsed_min + ete_min)
@@ -879,7 +908,7 @@ div[data-testid="stExpander"] details summary p {font-size: 1rem;}
 ensure_state()
 
 st.title("🛩️ Prépa VFR mobile")
-st.caption("Départ OACI, METAR, branches simples, carte openAIP, profil vertical.")
+st.caption("Départ OACI, METAR, branches simples, carte openAIP, vent au moment de la génération, profil vertical.")
 
 openaip_key = st.secrets.get("OPENAIP_KEY", "")
 
@@ -1035,7 +1064,13 @@ for raw in st.session_state.legs_data:
     )
 
 try:
-    legs, nav_points = build_route(departure, legs_in, offblock_utc, tas_kt)
+    legs, nav_points = build_route(
+        departure,
+        legs_in,
+        offblock_utc,
+        tas_kt,
+        departure_metar_decoded=metar_decoded,
+    )
 except ValueError as e:
     st.error(str(e))
     st.stop()
@@ -1178,7 +1213,6 @@ with tabs[3]:
     with c2:
         metric_card("Vent retenu", f"{route3(sel.wind_dir_deg)}/{sel.wind_speed_kt:.0f} kt")
     with c3:
-        midpoint_eta = sel.eta_utc - timedelta(minutes=sel.ete_min / 2)
-        metric_card("Validité approx.", nearest_hour(midpoint_eta).strftime("%Y-%m-%d %H:%M UTC"))
+        metric_card("Heure vent", generation_hour_utc().strftime("%Y-%m-%d %H:%M UTC"))
 
 st.caption("Installation : pip install streamlit streamlit-folium folium requests pandas plotly")
