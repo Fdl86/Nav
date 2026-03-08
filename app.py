@@ -1159,15 +1159,16 @@ with tabs[0]:
     sel = legs[selected_leg_idx - 1]
     c1, c2 = st.columns(2)
     with c1:
+        dm_txt = f"{abs(sel.declination_deg):.1f}°{'E' if sel.declination_deg >= 0 else 'W'}"
         metric_card("Branche", f"{sel.start_name} → {sel.end_name}")
         metric_card("RV", route3(sel.route_true_deg))
-        metric_card("CM", route3(sel.heading_mag_deg))
-        metric_card("Dérive", f"{sel.drift_deg:+.1f}°")
+        metric_card("Dérive", f"{sel.drift_deg:+.1f}° ({drift_label(sel.drift_deg)})")
+        metric_card("Cv", route3(sel.heading_true_deg))
     with c2:
-        metric_card("Vent", f"{route3(sel.wind_dir_deg)}/{sel.wind_speed_kt:.0f} kt")
-        metric_card("Source vent", sel.wind_source)
+        metric_card("Dm", dm_txt)
+        metric_card("Cm", route3(sel.heading_mag_deg))
+        metric_card("Vent", f"{route3(sel.wind_dir_deg)}/{sel.wind_speed_kt:.0f} kt ({sel.wind_source})")
         metric_card("Altitude", f"{int(round(sel.altitude_ft))} ft")
-        metric_card("GS", f"{sel.gs_kt:.0f} kt")
 
 with tabs[1]:
     total_nm = sum(l.distance_nm for l in legs)
@@ -1290,5 +1291,3 @@ with tabs[3]:
             f"**Vent branche {leg.idx}** : {route3(leg.wind_dir_deg)}/{leg.wind_speed_kt:.0f} kt "
             f"({leg.wind_source}) — {hour_txt}"
         )
-
-st.caption("Installation : pip install streamlit streamlit-folium folium requests pandas plotly pygeomag")
