@@ -780,8 +780,12 @@ def build_vertical_profile(
         leg_end_x = round(cumulative_nm + leg.distance_nm, 1)
         if leg.leg_type == "aerodrome":
             if leg.end_type == "verticale":
-                vt_marks.append(leg_end_x)
+                # La verticale doit être marquée au début de la phase finale d'arrivée,
+                # donc on l'aligne sur le TOD si une descente existe, sinon fin de branche.
+                vt_x = round(tod_nm, 1) if (tod_nm is not None and d2_nm > 0.01) else leg_end_x
+                vt_marks.append(vt_x)
             elif leg.end_type == "tour_de_piste":
+                # Le TDP reste matérialisé à l'arrivée terrain / fin de branche.
                 tdp_marks.append(leg_end_x)
 
         seg_x_local = [round((j / n) * leg.distance_nm, 1) for j in range(n + 1)]
@@ -1254,36 +1258,41 @@ with tabs[2]:
     ))
 
     for x in profile["toc_marks_nm"]:
+        x = round(x, 1)
         fig.add_vline(
-            x=round(x, 1),
-            line_dash="dash",
+            x=x,
+            line_dash="solid",
             line_color="green",
-            annotation_text="TOC",
+            annotation_text=f"TOC {x:.1f} NM",
         )
+
     for x in profile["tod_marks_nm"]:
+        x = round(x, 1)
         fig.add_vline(
-            x=round(x, 1),
-            line_dash="dot",
+            x=x,
+            line_dash="solid",
             line_color="purple",
-            annotation_text="TOD",
+            annotation_text=f"TOD {x:.1f} NM",
         )
 
     for x in profile["vt_marks_nm"]:
+        x = round(x, 1)
         fig.add_vline(
-            x=round(x, 1),
+            x=x,
             line_dash="dot",
             line_color="orange",
-            annotation_text="VT",
+            annotation_text=f"VT {x:.1f} NM",
         )
 
     for x in profile["tdp_marks_nm"]:
+        x = round(x, 1)
         fig.add_vline(
-            x=round(x, 1),
+            x=x,
             line_dash="dot",
             line_color="deepskyblue",
-            annotation_text="TDP",
+            annotation_text=f"TDP {x:.1f} NM",
         )
-
+        
     fig.update_layout(
         height=430,
         margin=dict(l=20, r=20, t=20, b=20),
