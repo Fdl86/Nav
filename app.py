@@ -871,7 +871,6 @@ def openaip_tiles(api_key: str):
 def wind_to_deg(wind_from_deg: float) -> float:
     return deg_norm(wind_from_deg + 180.0)
 
-
 def offset_point_perpendicular(
     lat1: float,
     lon1: float,
@@ -898,7 +897,6 @@ def offset_point_perpendicular(
     if norm < 1e-9:
         return lat, lon
 
-    # vecteur perpendiculaire unitaire
     px = side_sign * (-y_nm / norm)
     py = side_sign * (x_nm / norm)
 
@@ -948,7 +946,6 @@ def build_map(nav_points: List[NavPoint], legs: List[LegResult], selected_idx: i
             icon=folium.Icon(color=color, icon=icon, prefix="fa"),
         ).add_to(m)
 
-    # Overlay vent pour éviter superposition avec la ligne de branche
     for leg in legs:
         seg = interpolate_line(leg.start_lat, leg.start_lon, leg.end_lat, leg.end_lon, n=28)
         selected = leg.idx == selected_idx
@@ -961,63 +958,62 @@ def build_map(nav_points: List[NavPoint], legs: List[LegResult], selected_idx: i
             tooltip=f"Branche {leg.idx}: {leg.start_name} → {leg.end_name}",
         ).add_to(m)
 
-    if leg.end_type == "verticale":
-        folium.Marker(
-            [leg.end_lat, leg.end_lon],
-            icon=folium.DivIcon(
-                icon_size=(0, 0),
-                icon_anchor=(0, 0),
-                html="""
-                <div style="
-                    font-size:14px;
-                    font-weight:700;
-                    color:#f59e0b;
-                    background:transparent;
-                    border:none;
-                    padding:0;
-                    text-shadow:
-                        -1px -1px 0 rgba(255,255,255,0.95),
-                         1px -1px 0 rgba(255,255,255,0.95),
-                        -1px  1px 0 rgba(255,255,255,0.95),
-                         1px  1px 0 rgba(255,255,255,0.95);
-                ">
-                    VT
-                </div>
-                """
-            )
-        ).add_to(m)
-    
-    elif leg.end_type == "tour_de_piste":
-        folium.Marker(
-            [leg.end_lat, leg.end_lon],
-            icon=folium.DivIcon(
-                icon_size=(0, 0),
-                icon_anchor=(0, 0),
-                html="""
-                <div style="
-                    font-size:12px;
-                    font-weight:700;
-                    color:#00a6ff;
-                    background:transparent;
-                    border:none;
-                    padding:0;
-                    text-shadow:
-                        -1px -1px 0 rgba(255,255,255,0.95),
-                         1px -1px 0 rgba(255,255,255,0.95),
-                        -1px  1px 0 rgba(255,255,255,0.95),
-                         1px  1px 0 rgba(255,255,255,0.95);
-                ">
-                    TDP
-                </div>
-                """
-            )
-        ).add_to(m)
+        if leg.end_type == "verticale":
+            folium.Marker(
+                [leg.end_lat, leg.end_lon],
+                icon=folium.DivIcon(
+                    icon_size=(0, 0),
+                    icon_anchor=(0, 0),
+                    html="""
+                    <div style="
+                        font-size:14px;
+                        font-weight:700;
+                        color:#f59e0b;
+                        background:transparent;
+                        border:none;
+                        padding:0;
+                        text-shadow:
+                            -1px -1px 0 rgba(255,255,255,0.95),
+                             1px -1px 0 rgba(255,255,255,0.95),
+                            -1px  1px 0 rgba(255,255,255,0.95),
+                             1px  1px 0 rgba(255,255,255,0.95);
+                    ">
+                        VT
+                    </div>
+                    """
+                )
+            ).add_to(m)
 
-        # -------- Vent V2 : flèche + label pour toutes les branches --------
-        # alternance du côté pour limiter les collisions entre branches proches
+        elif leg.end_type == "tour_de_piste":
+            folium.Marker(
+                [leg.end_lat, leg.end_lon],
+                icon=folium.DivIcon(
+                    icon_size=(0, 0),
+                    icon_anchor=(0, 0),
+                    html="""
+                    <div style="
+                        font-size:12px;
+                        font-weight:700;
+                        color:#00a6ff;
+                        background:transparent;
+                        border:none;
+                        padding:0;
+                        text-shadow:
+                            -1px -1px 0 rgba(255,255,255,0.95),
+                             1px -1px 0 rgba(255,255,255,0.95),
+                            -1px  1px 0 rgba(255,255,255,0.95),
+                             1px  1px 0 rgba(255,255,255,0.95);
+                    ">
+                        TDP
+                    </div>
+                    """
+                )
+            ).add_to(m)
+
+        # ===== Vent sur toutes les branches =====
         side_sign = 1 if (leg.idx % 2 == 1) else -1
+        offset_nm = 1.15 if selected else 0.85
 
-        offset_nm = 1.2 if selected else 0.8
         anchor_lat, anchor_lon = offset_point_perpendicular(
             leg.start_lat,
             leg.start_lon,
@@ -1031,11 +1027,15 @@ def build_map(nav_points: List[NavPoint], legs: List[LegResult], selected_idx: i
 
         arrow_bearing = wind_to_deg(leg.wind_dir_deg)
         arrow_len_nm = min(1.0, 0.45 + 0.03 * leg.wind_speed_kt)
+
         tip_lat, tip_lon = destination_point_nm(anchor_lat, anchor_lon, arrow_bearing, arrow_len_nm)
+
+        arrow_color = "#1d4ed8" if selected else "#60a5fa"
+        label_color = "#0f3b82" if selected else "#2563eb"
 
         folium.PolyLine(
             locations=[(anchor_lat, anchor_lon), (tip_lat, tip_lon)],
-            color="#2563eb",
+            color=arrow_color,
             weight=3,
             opacity=0.9,
         ).add_to(m)
@@ -1045,7 +1045,7 @@ def build_map(nav_points: List[NavPoint], legs: List[LegResult], selected_idx: i
 
         folium.PolyLine(
             locations=[(head_left_lat, head_left_lon), (tip_lat, tip_lon), (head_right_lat, head_right_lon)],
-            color="#2563eb",
+            color=arrow_color,
             weight=3,
             opacity=0.9,
         ).add_to(m)
@@ -1071,7 +1071,7 @@ def build_map(nav_points: List[NavPoint], legs: List[LegResult], selected_idx: i
                 <div style="
                     font-size:11px;
                     font-weight:700;
-                    color:#0f3b82;
+                    color:{label_color};
                     background:transparent;
                     border:none;
                     padding:0;
