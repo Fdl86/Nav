@@ -1540,7 +1540,7 @@ with tabs[0]:
             width="stretch",
         )
     fmap = build_map(nav_points, legs, selected_leg_idx, openaip_key, basemap)
-    st_folium(fmap, width="stretch", height=560)
+    st_folium(fmap, width="stretch", height=560, key="main_map", returned_objects=[],)
 
     sel = legs[selected_leg_idx - 1]
     c1, c2 = st.columns(2)
