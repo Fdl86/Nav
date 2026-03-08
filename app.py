@@ -733,8 +733,8 @@ def build_vertical_profile(
     alt_profile: List[float] = []
     toc_marks: List[float] = []
     tod_marks: List[float] = []
-    vt_marks: List[float] = []
-    tdp_marks: List[float] = []
+    vt_marks: List[Tuple[float, float, float]] = []
+    tdp_marks: List[Tuple[float, float, float]] = []
 
     cumulative_nm = 0.0
     current_alt = nav_points[0].elev_ft
@@ -744,14 +744,16 @@ def build_vertical_profile(
         seg_pts = interpolate_line(leg.start_lat, leg.start_lon, leg.end_lat, leg.end_lon, n=n)
 
         cruise_alt = leg.altitude_ft
-        end_target_alt = arrival_target_alt_ft(
-            arr_elev_ft=leg.arrival_elev_ft,
-            end_type=leg.end_type,
-            is_aerodrome=(leg.leg_type == "aerodrome"),
-            verticale_ft=verticale_ft,
-            tdp_ft=tdp_ft,
-            cruise_alt_ft=cruise_alt,
-        )
+
+        is_arrival_aerodrome = leg.leg_type == "aerodrome" and leg.arrival_elev_ft > 0
+        if is_arrival_aerodrome and leg.end_type == "verticale":
+            end_target_alt = leg.arrival_elev_ft + verticale_ft
+        elif is_arrival_aerodrome and leg.end_type == "tour_de_piste":
+            end_target_alt = leg.arrival_elev_ft + tdp_ft
+        elif is_arrival_aerodrome and leg.end_type == "standard":
+            end_target_alt = leg.arrival_elev_ft + 300.0
+        else:
+            end_target_alt = cruise_alt
 
         delta1 = cruise_alt - current_alt
         if delta1 >= 0:
@@ -778,15 +780,18 @@ def build_vertical_profile(
             tod_marks.append(tod_nm)
 
         leg_end_x = round(cumulative_nm + leg.distance_nm, 1)
-        if leg.leg_type == "aerodrome":
+        if leg.leg_type == "aerodrome" and leg.arrival_elev_ft > 0:
+            terrain_alt = leg.arrival_elev_ft
+
             if leg.end_type == "verticale":
-                # La verticale doit être marquée au début de la phase finale d'arrivée,
-                # donc on l'aligne sur le TOD si une descente existe, sinon fin de branche.
                 vt_x = round(tod_nm, 1) if (tod_nm is not None and d2_nm > 0.01) else leg_end_x
-                vt_marks.append(vt_x)
+                vt_top = terrain_alt + verticale_ft
+                vt_marks.append((vt_x, terrain_alt, vt_top))
+
             elif leg.end_type == "tour_de_piste":
-                # Le TDP reste matérialisé à l'arrivée terrain / fin de branche.
-                tdp_marks.append(leg_end_x)
+                tdp_x = leg_end_x
+                tdp_top = terrain_alt + tdp_ft
+                tdp_marks.append((tdp_x, terrain_alt, tdp_top))
 
         seg_x_local = [round((j / n) * leg.distance_nm, 1) for j in range(n + 1)]
 
@@ -824,10 +829,9 @@ def build_vertical_profile(
         "alt_profile_ft": alt_profile,
         "toc_marks_nm": toc_marks,
         "tod_marks_nm": tod_marks,
-        "vt_marks_nm": vt_marks,
-        "tdp_marks_nm": tdp_marks,
+        "vt_marks": vt_marks,
+        "tdp_marks": tdp_marks,
     }
-
 
 def openaip_tiles(api_key: str):
     return f"https://api.tiles.openaip.net/api/data/openaip/{{z}}/{{x}}/{{y}}.png?apiKey={api_key}"
@@ -1210,9 +1214,9 @@ with tabs[1]:
         leg_card(leg, selected=(leg.idx == selected_leg_idx))
 
 with tabs[2]:
-    verticale_ft = st.number_input("Hauteur verticale terrain (ft sol)", min_value=500, max_value=3000, value=1500, step=100)
-    tdp_ft = st.number_input("Hauteur tour de piste (ft sol)", min_value=500, max_value=2000, value=1000, step=100)
-
+    verticale_ft = 1500
+    tdp_ft = 1000
+    
     profile = build_vertical_profile(
         nav_points=nav_points,
         legs=legs,
@@ -1261,36 +1265,54 @@ with tabs[2]:
         x = round(x, 1)
         fig.add_vline(
             x=x,
-            line_dash="solid",
             line_color="green",
-            annotation_text=f"TOC {x:.1f} NM",
+            line_width=1,
+            annotation_text=f"TOC {x:.1f}",
         )
 
     for x in profile["tod_marks_nm"]:
         x = round(x, 1)
         fig.add_vline(
             x=x,
-            line_dash="solid",
             line_color="purple",
-            annotation_text=f"TOD {x:.1f} NM",
+            line_width=1,
+            annotation_text=f"TOD {x:.1f}",
+        )
+        
+    for x, y0, y1 in profile["vt_marks"]:
+        fig.add_shape(
+            type="line",
+            x0=round(x, 1),
+            x1=round(x, 1),
+            y0=round(y0),
+            y1=round(y1),
+            line=dict(color="orange", width=2, dash="dot"),
+        )
+        fig.add_annotation(
+            x=round(x, 1),
+            y=round(y1),
+            text="VT",
+            showarrow=False,
+            yshift=10,
+            font=dict(color="orange"),
         )
 
-    for x in profile["vt_marks_nm"]:
-        x = round(x, 1)
-        fig.add_vline(
-            x=x,
-            line_dash="dot",
-            line_color="orange",
-            annotation_text=f"VT {x:.1f} NM",
+    for x, y0, y1 in profile["tdp_marks"]:
+        fig.add_shape(
+            type="line",
+            x0=round(x, 1),
+            x1=round(x, 1),
+            y0=round(y0),
+            y1=round(y1),
+            line=dict(color="deepskyblue", width=2, dash="dot"),
         )
-
-    for x in profile["tdp_marks_nm"]:
-        x = round(x, 1)
-        fig.add_vline(
-            x=x,
-            line_dash="dot",
-            line_color="deepskyblue",
-            annotation_text=f"TDP {x:.1f} NM",
+        fig.add_annotation(
+            x=round(x, 1),
+            y=round(y1),
+            text="TDP",
+            showarrow=False,
+            yshift=10,
+            font=dict(color="deepskyblue"),
         )
         
     fig.update_layout(
@@ -1300,7 +1322,17 @@ with tabs[2]:
         yaxis_title="Altitude (ft)",
         legend_orientation="h",
     )
-    st.plotly_chart(fig, use_container_width=True)
+    
+    st.plotly_chart(
+        fig,
+        use_container_width=True,
+        config={
+            "displayModeBar": False,
+            "scrollZoom": False,
+            "doubleClick": False,
+            "staticPlot": True,
+        },
+    )
 
     if x_vals:
         c1, c2, c3 = st.columns(3)
