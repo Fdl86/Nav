@@ -23,9 +23,6 @@ except Exception:
     _GEOMAG = None
     GEOMAG_AVAILABLE = False
 
-st.cache_data.clear()
-st.cache_resource.clear()
-
 APP_TITLE = "Prépa VFR Mobile"
 UA = {"User-Agent": "vfr-prep-mobile/1.5"}
 
@@ -1598,6 +1595,7 @@ with tabs[2]:
 
     if elev_m is None:
         terrain_ft = [0] * len(profile["terrain_route_pts"])
+        st.write("DEBUG relief:", elev_m)
         st.warning("Relief indisponible en ligne, profil affiché sans terrain.")
     else:
         terrain_ft = [int(round(m_to_ft(x))) for x in elev_m]
