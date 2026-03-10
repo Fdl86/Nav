@@ -1257,13 +1257,20 @@ def default_legs():
         }
     ]
 
-
 def ensure_state():
     if "legs_data" not in st.session_state:
         st.session_state.legs_data = default_legs()
-    if "basemap_choice" not in st.session_state:
-        st.session_state.basemap_choice = "OpenAIP" if st.secrets.get("OPENAIP_KEY", "") else "OpenStreetMap"
 
+    default_map = "OpenAIP" if st.secrets.get("OPENAIP_KEY", "") else "OpenStreetMap"
+
+    if "basemap_choice" not in st.session_state:
+        st.session_state.basemap_choice = default_map
+
+    if "basemap_selector" not in st.session_state:
+        st.session_state.basemap_selector = st.session_state.basemap_choice
+
+def sync_basemap_choice():
+    st.session_state.basemap_choice = st.session_state.basemap_selector
 
 st.set_page_config(
     page_title=APP_TITLE,
@@ -1469,12 +1476,23 @@ selected_leg_idx = st.selectbox(
 tabs = st.tabs(["Carte", "Navigation", "Profil vertical", "Météo"])
 
 with tabs[0]:
-    basemap = st.selectbox(
-            "Fond de carte",
-            ["OpenAIP", "OpenStreetMap", "OpenTopoMap"],
-            key="basemap_choice",
-            width="stretch",
-        )
+    basemap_options = ["OpenAIP", "OpenStreetMap", "OpenTopoMap"]
+
+    if st.session_state.basemap_choice not in basemap_options:
+        st.session_state.basemap_choice = "OpenStreetMap"
+    if st.session_state.basemap_selector not in basemap_options:
+        st.session_state.basemap_selector = st.session_state.basemap_choice
+
+    st.selectbox(
+        "Fond de carte",
+        basemap_options,
+        index=basemap_options.index(st.session_state.basemap_choice),
+        key="basemap_selector",
+        on_change=sync_basemap_choice,
+        width="stretch",
+    )
+
+    basemap = st.session_state.basemap_choice
     fmap = build_map(nav_points, legs, selected_leg_idx, openaip_key, basemap)
     st_folium(fmap, width="stretch", height=560, key="main_map", returned_objects=[],)
 
