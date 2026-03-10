@@ -511,12 +511,11 @@ def mean_vector_from_pairs(pairs: List[Tuple[float, float]]) -> Optional[Tuple[f
 
 
 def sample_point_count(distance_nm: float) -> int:
-    if distance_nm <= 15:
-        return 2   # 3 points
-    if distance_nm <= 40:
-        return 4   # 5 points
-    return 6       # 7 points
-
+    # n = nombre de segments dans interpolate_line, donc :
+    # 1 -> 2 points, 2 -> 3 points
+    if distance_nm <= 25:
+        return 1   # point milieu + extrémités = 2 points utiles / très léger
+    return 2       # 3 points pour les branches longues
 
 def mean_branch_pressure_wind(
     items: List[dict],
@@ -567,7 +566,7 @@ def union_pressure_vars(altitudes_ft: List[float], level_map: Dict[int, float]) 
             })
     return tuple(sorted(vars_set))
 
-
+@st.cache_data(ttl=60 * 10, show_spinner=False)
 def prefetch_winds_for_geometries(
     geometries: List[dict],
     metar_decoded: Optional[dict] = None,
@@ -596,96 +595,36 @@ def prefetch_winds_for_geometries(
     lons = tuple(round(x, 6) for x in point_lons)
 
     icon_pressure_vars = union_pressure_vars(altitudes_ft, DWD_LEVELS_M)
-    mf_pressure_vars = union_pressure_vars(altitudes_ft, MF_LEVELS_M)
-    surface_vars = ("wind_speed_10m", "wind_direction_10m")
+    wind_by_leg: Dict[int, Tuple[str, float, float]] = {}
 
     icon_pressure_items = None
-    mf_pressure_items = None
-    icon_surface_items = None
-    mf_surface_items = None
-
     if icon_pressure_vars:
         try:
             icon_pressure_items = fetch_openmeteo_hour_block("ICON-D2", lats, lons, icon_pressure_vars)
         except Exception:
             icon_pressure_items = None
 
-    wind_by_leg: Dict[int, Tuple[str, float, float]] = {}
-
-    unresolved = []
-    for geom in geometries:
-        point_indices = branch_point_indices[geom["idx"]]
-        avg = None
-        if icon_pressure_items:
-            avg = mean_branch_pressure_wind(icon_pressure_items, point_indices, gen_hour, geom["altitude_ft"], DWD_LEVELS_M)
-        if avg:
-            wind_by_leg[geom["idx"]] = ("ICON-D2 niveau", avg[0], avg[1])
-        else:
-            unresolved.append(geom)
-
-    if unresolved and mf_pressure_vars:
-        try:
-            mf_pressure_items = fetch_openmeteo_hour_block("AROME", lats, lons, mf_pressure_vars)
-        except Exception:
-            mf_pressure_items = None
-
-        still_unresolved = []
-        for geom in unresolved:
-            avg = None
-            if mf_pressure_items:
-                avg = mean_branch_pressure_wind(
-                    mf_pressure_items,
-                    branch_point_indices[geom["idx"]],
-                    gen_hour,
-                    geom["altitude_ft"],
-                    MF_LEVELS_M,
-                )
+    if icon_pressure_items:
+        for geom in geometries:
+            point_indices = branch_point_indices[geom["idx"]]
+            avg = mean_branch_pressure_wind(
+                icon_pressure_items,
+                point_indices,
+                gen_hour,
+                geom["altitude_ft"],
+                DWD_LEVELS_M,
+            )
             if avg:
-                wind_by_leg[geom["idx"]] = ("AROME niveau", avg[0], avg[1])
-            else:
-                still_unresolved.append(geom)
-        unresolved = still_unresolved
-
-    if unresolved:
-        try:
-            icon_surface_items = fetch_openmeteo_hour_block("ICON-D2", lats, lons, surface_vars)
-        except Exception:
-            icon_surface_items = None
-
-        still_unresolved = []
-        for geom in unresolved:
-            avg = None
-            if icon_surface_items:
-                avg = mean_branch_surface_wind(icon_surface_items, branch_point_indices[geom["idx"]], gen_hour)
-            if avg:
-                wind_by_leg[geom["idx"]] = ("ICON-D2 10m", avg[0], avg[1])
-            else:
-                still_unresolved.append(geom)
-        unresolved = still_unresolved
-
-    if unresolved:
-        try:
-            mf_surface_items = fetch_openmeteo_hour_block("AROME", lats, lons, surface_vars)
-        except Exception:
-            mf_surface_items = None
-
-        still_unresolved = []
-        for geom in unresolved:
-            avg = None
-            if mf_surface_items:
-                avg = mean_branch_surface_wind(mf_surface_items, branch_point_indices[geom["idx"]], gen_hour)
-            if avg:
-                wind_by_leg[geom["idx"]] = ("AROME 10m", avg[0], avg[1])
-            else:
-                still_unresolved.append(geom)
-        unresolved = still_unresolved
+                wind_by_leg[geom["idx"]] = ("ICON-D2 niveau", avg[0], avg[1])
 
     metar_pair = metar_surface_wind(metar_decoded)
-    for geom in unresolved:
-        if metar_pair:
-            wind_by_leg[geom["idx"]] = ("METAR départ", metar_pair[0], metar_pair[1])
-        else:
-            wind_by_leg[geom["idx"]] = ("Aucune donnée vent", 0.0, 0.0)
+
+    for geom in geometries:
+        if geom["idx"] not in wind_by_leg:
+            if metar_pair:
+                wind_by_leg[geom["idx"]] = ("METAR départ", metar_pair[0], metar_pair[1])
+            else:
+                wind_by_leg[geom["idx"]] = ("Vent indisponible", 0.0, 0.0)
 
     return wind_by_leg
     
