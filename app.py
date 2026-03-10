@@ -115,10 +115,20 @@ def session():
     return s
 
 
+#def fetch_json(url: str, params: Optional[dict] = None, timeout: int = 20):
+#    r = session().get(url, params=params, timeout=timeout)
+#    r.raise_for_status()
+#    return r.json()
+
 def fetch_json(url: str, params: Optional[dict] = None, timeout: int = 20):
-    r = session().get(url, params=params, timeout=timeout)
-    r.raise_for_status()
-    return r.json()
+    try:
+        r = session().get(url, params=params, timeout=timeout)
+        st.write("DEBUG fetch_json", url, "status=", r.status_code)
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        st.write("DEBUG fetch_json ERROR", url, repr(e))
+        raise
 
 
 @st.cache_data(ttl=60 * 60 * 24, show_spinner=False)
@@ -1348,6 +1358,39 @@ st.title("🛩️ Prépa VFR mobile")
 st.caption("Départ OACI, METAR/TAF, branches simples, carte openAIP, cap magnétique, profil vertical.")
 
 openaip_key = st.secrets.get("OPENAIP_KEY", "")
+if st.button("DEBUG Open-Meteo"):
+    try:
+        js_wind = fetch_json(
+            OPENMETEO_DWD,
+            params={
+                "latitude": "46.409523218701246",
+                "longitude": "0.24460542437578955",
+                "hourly": "wind_speed_925hPa,wind_direction_925hPa,geopotential_height_925hPa",
+                "wind_speed_unit": "kn",
+                "timezone": "UTC",
+                "forecast_days": 2,
+                "cell_selection": "nearest",
+            },
+            timeout=25,
+        )
+        st.write("DEBUG wind OK", js_wind.get("hourly", {}).get("time", [])[:3])
+
+    except Exception as e:
+        st.write("DEBUG wind FAIL", repr(e))
+
+    try:
+        js_elev = fetch_json(
+            OPENMETEO_ELEV,
+            params={
+                "latitude": "46.409523218701246",
+                "longitude": "0.24460542437578955",
+            },
+            timeout=25,
+        )
+        st.write("DEBUG elev OK", js_elev)
+
+    except Exception as e:
+        st.write("DEBUG elev FAIL", repr(e))
 
 with st.expander("Vol", expanded=True):
     c1, c2, c3 = st.columns(3)
