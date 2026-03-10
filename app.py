@@ -23,6 +23,7 @@ except Exception:
     _GEOMAG = None
     GEOMAG_AVAILABLE = False
 
+st.cache_data.clear()
 
 APP_TITLE = "Prépa VFR Mobile"
 UA = {"User-Agent": "vfr-prep-mobile/1.5"}
