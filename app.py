@@ -570,6 +570,7 @@ def union_pressure_vars(altitudes_ft: List[float], level_map: Dict[int, float]) 
     return tuple(sorted(vars_set))
 
 
+@st.cache_data(ttl=60 * 10, show_spinner=False)
 def prefetch_winds_for_geometries(
     geometries: List[dict],
     metar_decoded: Optional[dict] = None,
@@ -724,6 +725,7 @@ def true_to_magnetic(true_deg: float, declination_deg: float) -> float:
     # variation Est = on soustrait, Ouest = on ajoute
     return deg_norm(true_deg - declination_deg)
 
+@st.cache_data(show_spinner=False)
 def build_route(
     departure: Aerodrome,
     legs_in: List[LegInput],
@@ -861,6 +863,7 @@ def arrival_target_alt_ft(arr_elev_ft: float, end_type: str, is_aerodrome: bool,
         return arr_elev_ft + tdp_ft
     return arr_elev_ft + 300.0
 
+@st.cache_data(show_spinner=False)
 def build_vertical_profile(
     nav_points: List[NavPoint],
     legs: List[LegResult],
@@ -1065,24 +1068,24 @@ def build_map(nav_points: List[NavPoint],legs: List[LegResult],selected_idx: int
                 attr="openAIP",
                 name="openAIP",
                 overlay=False,
-                control=True,
+                control=False,
                 max_zoom=14,
             ).add_to(m)
         else:
             folium.TileLayer("OpenStreetMap", name="OSM").add_to(m)
     elif basemap == "OpenStreetMap":
-        folium.TileLayer("OpenStreetMap", name="OSM", overlay=False, control=True).add_to(m)
+        folium.TileLayer("OpenStreetMap", name="OSM", overlay=False, control=False).add_to(m)
     elif basemap == "OpenTopoMap":
         folium.TileLayer(
             tiles="https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
             attr="OpenTopoMap",
             name="OpenTopoMap",
             overlay=False,
-            control=True,
+            control=False,
             max_zoom=17,
         ).add_to(m)
     else:
-        folium.TileLayer("OpenStreetMap", name="OSM", overlay=False, control=True).add_to(m)
+        folium.TileLayer("OpenStreetMap", name="OSM", overlay=False, control=False).add_to(m)
 
     dep = nav_points[0]
     folium.Marker(
