@@ -414,7 +414,7 @@ def pick_levels(target_alt_m: float, level_map: Dict[int, float]):
     return levels[-1][0], levels[-1][0]
 
 
-@st.cache_data(ttl=60 * 10, show_spinner=False)
+@st.cache_data(ttl=60 * 60, show_spinner=False)
 def fetch_openmeteo_hour_block(
     source: str,
     lats: Tuple[float, ...],
@@ -763,7 +763,7 @@ def build_route(
         )
 
     return legs_out, nav_points
-@st.cache_data(ttl=60 * 60 * 6, show_spinner=False)
+@st.cache_data(ttl=60 * 60 * 12, show_spinner=False)
 def fetch_elevations(lats: Tuple[float, ...], lons: Tuple[float, ...]):
     try:
         if not lats or not lons or len(lats) != len(lons):
