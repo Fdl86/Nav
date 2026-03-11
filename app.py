@@ -1559,7 +1559,6 @@ with tabs[1]:
     for leg in legs:
         leg_card(leg, selected=(leg.idx == selected_leg_idx))
 
-# APRÈS
 with tabs[2]:
     verticale_ft = 1500
     tdp_ft = 1000
