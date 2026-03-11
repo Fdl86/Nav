@@ -1791,12 +1791,10 @@ with tabs[2]:
             ("mid",  "cloud_cover_mid",  6500,  20000, "rgba(100,140,200,"),
             ("high", "cloud_cover_high", 20000, 40000, "rgba(180,200,230,"),
         ]
-        # Niveaux de pression pour les barbules → altitude approx en ft
-        BARB_LEVELS = [
-            (850, 5000,  "#1a3a5c"),
-            (700, 10000, "#1a3a5c"),
-            (500, 18000, "#1a3a5c"),
-        ]
+        # Niveaux de pression pour les barbules (hPa, label)
+        BARB_LEVELS_HPA = [(850, "850"), (700, "700"), (500, "500")]
+        MAST_FT     = 800   # hauteur visuelle du mât en ft sur l'axe Y
+        BARB_GAP_FT = 500   # espacement entre les 3 étages de barbules
 
         # Calcul des x de début/fin de chaque branche sur l'axe profil
         cumul = 0.0
@@ -1811,7 +1809,7 @@ with tabs[2]:
         for leg_i, leg in enumerate(legs):
             if leg_i >= len(profile_wx):
                 break
-            item = profile_wx[leg_i]
+            item   = profile_wx[leg_i]
             hourly = item.get("hourly", {})
             h_idx  = get_hour_index(hourly.get("time", []), hour_key)
             if h_idx is None:
@@ -1819,12 +1817,15 @@ with tabs[2]:
 
             x_start, x_end, x_mid = leg_x_ranges[leg_i]
 
+            # Base des barbules = altitude croisière de la branche + 500 ft
+            barb_base_ft = leg.altitude_ft + 500
+
             # ── Bandes nuageuses ──
             for _name, var, alt_bot, alt_top, rgba_prefix in CLOUD_BANDS:
                 arr = hourly.get(var, [])
                 if h_idx >= len(arr) or arr[h_idx] is None:
                     continue
-                cover = float(arr[h_idx])   # 0-100
+                cover = float(arr[h_idx])
                 if cover < 5:
                     continue
                 opacity = round(0.08 + cover / 100.0 * 0.45, 3)
@@ -1835,7 +1836,6 @@ with tabs[2]:
                     layer="below",
                     line_width=0,
                 )
-                # Petit label couverture au centre du segment
                 fig.add_annotation(
                     x=x_mid,
                     y=alt_bot + (alt_top - alt_bot) * 0.5,
@@ -1846,22 +1846,24 @@ with tabs[2]:
                 )
 
             # ── Barbules de vent ──
-            for hpa, alt_ft, color in BARB_LEVELS:
+            # Les 3 niveaux sont empilés au-dessus de la trajectoire de croisière
+            for b_i, (hpa, hpa_label) in enumerate(BARB_LEVELS_HPA):
                 spd_arr = hourly.get(f"wind_speed_{hpa}hPa", [])
                 dir_arr = hourly.get(f"wind_direction_{hpa}hPa", [])
                 if h_idx >= len(spd_arr) or h_idx >= len(dir_arr):
                     continue
-                spd = spd_arr[h_idx]
+                spd  = spd_arr[h_idx]
                 wdir = dir_arr[h_idx]
                 if spd is None or wdir is None:
                     continue
-                _draw_wind_barb(fig, x_mid, float(alt_ft), float(spd), float(wdir), color=color)
-                # Tooltip via annotation invisible
+                anchor_ft = barb_base_ft + b_i * (MAST_FT + BARB_GAP_FT)
+                _draw_wind_barb(fig, x_mid, anchor_ft, float(spd), float(wdir))
                 fig.add_annotation(
-                    x=x_mid, y=float(alt_ft) + 1600,
-                    text=f"{route3(float(wdir))}/{float(spd):.0f}kt",
+                    x=x_mid,
+                    y=anchor_ft + MAST_FT + 200,
+                    text=f"{hpa_label} · {route3(float(wdir))}/{float(spd):.0f}kt",
                     showarrow=False,
-                    font=dict(size=8, color="rgba(30,58,95,0.75)"),
+                    font=dict(size=8, color="rgba(30,58,95,0.85)"),
                     bgcolor="rgba(255,255,255,0)",
                 )
     # ────────────────────────────────────────────────────────────────────────
