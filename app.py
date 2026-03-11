@@ -47,7 +47,8 @@ MF_LEVELS_M = {
     750: 2500, 700: 3000, 650: 3600, 600: 4200, 550: 4900, 500: 5600,
     450: 6300, 400: 7200, 350: 8100, 300: 9200, 250: 10400, 200: 11800
 }
-
+_DWD_LEVELS_SORTED = sorted(DWD_LEVELS_M.items(), key=lambda x: x[1])
+_MF_LEVELS_SORTED  = sorted(MF_LEVELS_M.items(),  key=lambda x: x[1])
 
 @dataclass
 class Aerodrome:
@@ -401,9 +402,8 @@ def nearest_hour(dt: datetime):
 def generation_hour_utc() -> datetime:
     return nearest_hour(datetime.now(timezone.utc))
 
-
 def pick_levels(target_alt_m: float, level_map: Dict[int, float]):
-    levels = sorted(level_map.items(), key=lambda x: x[1])
+    levels = _DWD_LEVELS_SORTED if level_map is DWD_LEVELS_M else _MF_LEVELS_SORTED
     if target_alt_m <= levels[0][1]:
         return levels[0][0], levels[0][0]
     if target_alt_m >= levels[-1][1]:
@@ -412,7 +412,6 @@ def pick_levels(target_alt_m: float, level_map: Dict[int, float]):
         if h1 <= target_alt_m <= h2:
             return p1, p2
     return levels[-1][0], levels[-1][0]
-
 
 @st.cache_data(ttl=60 * 60, show_spinner=False)
 def fetch_openmeteo_hour_block(
@@ -434,14 +433,11 @@ def fetch_openmeteo_hour_block(
     js = fetch_json(url, params=params, timeout=25)
     return js if isinstance(js, list) else [js]
 
-
-def get_hour_index(hourly_time: List[str], target_dt: datetime) -> Optional[int]:
-    target_key = target_dt.strftime("%Y-%m-%dT%H:%M")
+def get_hour_index(hourly_time: List[str], target_key: str) -> Optional[int]:
     for i, t in enumerate(hourly_time):
         if t == target_key:
             return i
     return None
-
 
 def interpolate_pressure_wind_for_item(item: dict, hour_idx: int, target_alt_ft: float, level_map: Dict[int, float]):
     target_alt_m = ft_to_m(target_alt_ft)
@@ -520,19 +516,18 @@ def sample_point_count(distance_nm: float) -> int:
 def mean_branch_pressure_wind(
     items: List[dict],
     point_indices: List[int],
-    gen_hour: datetime,
+    hour_key: str,
     altitude_ft: float,
     level_map: Dict[int, float],
 ) -> Optional[Tuple[float, float]]:
     pairs = []
     for idx in point_indices:
         item = items[idx]
-        hour_idx = get_hour_index(item.get("hourly", {}).get("time", []), gen_hour)
+        hour_idx = get_hour_index(item.get("hourly", {}).get("time", []), hour_key)
         pair = interpolate_pressure_wind_for_item(item, hour_idx, altitude_ft, level_map)
         if pair:
             pairs.append(pair)
     return mean_vector_from_pairs(pairs)
-
 
 def mean_branch_surface_wind(
     items: List[dict],
@@ -566,7 +561,6 @@ def union_pressure_vars(altitudes_ft: List[float], level_map: Dict[int, float]) 
             })
     return tuple(sorted(vars_set))
 
-@st.cache_data(ttl=60 * 10, show_spinner=False)
 def prefetch_winds_for_geometries(
     geometries: List[dict],
     metar_decoded: Optional[dict] = None,
@@ -575,6 +569,7 @@ def prefetch_winds_for_geometries(
         return {}
 
     gen_hour = generation_hour_utc()
+    hour_key = gen_hour.strftime("%Y-%m-%dT%H:%M")
 
     point_lats: List[float] = []
     point_lons: List[float] = []
@@ -610,7 +605,7 @@ def prefetch_winds_for_geometries(
             avg = mean_branch_pressure_wind(
                 icon_pressure_items,
                 point_indices,
-                gen_hour,
+                hour_key,
                 geom["altitude_ft"],
                 DWD_LEVELS_M,
             )
@@ -1530,7 +1525,13 @@ with tabs[0]:
     )
 
     basemap = st.session_state.basemap_choice
-    fmap = build_map(nav_points, legs, selected_leg_idx, openaip_key, basemap)
+    map_key = (st.session_state["route_key"], selected_leg_idx, basemap)
+    if st.session_state.get("map_key") == map_key:
+        fmap = st.session_state["map_cache"]
+    else:
+        fmap = build_map(nav_points, legs, selected_leg_idx, openaip_key, basemap)
+        st.session_state["map_key"]   = map_key
+        st.session_state["map_cache"] = fmap
     st_folium(fmap, width="stretch", height=560, key="main_map", returned_objects=[],)
 
     sel = legs[selected_leg_idx - 1]
@@ -1567,25 +1568,37 @@ with tabs[1]:
     for leg in legs:
         leg_card(leg, selected=(leg.idx == selected_leg_idx))
 
+# APRÈS
 with tabs[2]:
     verticale_ft = 1500
     tdp_ft = 1000
-    
-    profile = build_vertical_profile(
-        nav_points=nav_points,
-        legs=legs,
-        climb_rate_fpm=climb_rate_fpm,
-        climb_speed_kt=climb_speed_kt,
-        descent_rate_fpm=descent_rate_fpm,
-        verticale_ft=verticale_ft,
-        tdp_ft=tdp_ft,
-    )
 
-    elev_m = fetch_elevations(
-        tuple(p[0] for p in profile["terrain_route_pts"]),
-        tuple(p[1] for p in profile["terrain_route_pts"]),
+    profile_key = (
+        st.session_state["route_key"],
+        climb_rate_fpm, climb_speed_kt, descent_rate_fpm,
+        verticale_ft, tdp_ft,
     )
-
+    if st.session_state.get("profile_key") == profile_key:
+        profile = st.session_state["profile_cache"]
+        elev_m  = st.session_state["profile_elev"]
+    else:
+        profile = build_vertical_profile(
+            nav_points=nav_points,
+            legs=legs,
+            climb_rate_fpm=climb_rate_fpm,
+            climb_speed_kt=climb_speed_kt,
+            descent_rate_fpm=descent_rate_fpm,
+            verticale_ft=verticale_ft,
+            tdp_ft=tdp_ft,
+        )
+        elev_m = fetch_elevations(
+            tuple(p[0] for p in profile["terrain_route_pts"]),
+            tuple(p[1] for p in profile["terrain_route_pts"]),
+        )
+        st.session_state["profile_key"]   = profile_key
+        st.session_state["profile_cache"] = profile
+        st.session_state["profile_elev"]  = elev_m
+        
     if elev_m is None:
         terrain_ft = [0] * len(profile["terrain_route_pts"])
         st.warning("Relief indisponible en ligne, profil affiché sans terrain.")
