@@ -1755,10 +1755,10 @@ with tabs[2]:
             if pct < 87.5: return "BKN"
             return "OVC"
 
-        # Étages nuageux visuels (bandes de fond)
+        # Étages nuageux visuels (bandes de fond) — couleurs visibles sur fond sombre
         CLOUD_LAYERS = [
-            ("cloud_cover_low",  0,    6500,  "rgba(160,190,230,"),
-            ("cloud_cover_mid",  6500, 14000, "rgba(120,155,210,"),
+            ("cloud_cover_low",  0,    6500,  "rgba(200,220,255,"),   # blanc-bleu clair
+            ("cloud_cover_mid",  6500, 10000, "rgba(180,200,245,"),   # limité à FL100
         ]
         # Flèches aux niveaux standard VFR (≤ FL135)
         WIND_LEVELS = [(850, "FL050"), (700, "FL100")]
@@ -1791,13 +1791,14 @@ with tabs[2]:
                 cover = float(arr[h_idx])
                 if cover < 5:
                     continue
-                opacity = round(0.06 + cover / 100.0 * 0.38, 3)
+                opacity = round(0.12 + cover / 100.0 * 0.50, 3)
                 fig.add_hrect(
                     y0=alt_bot, y1=alt_top,
                     x0=xs, x1=xe,
                     fillcolor=f"{rgba}{opacity})",
                     layer="below",
-                    line_width=0,
+                    line_width=0.5,
+                    line_color="rgba(180,210,255,0.4)",
                 )
                 fig.add_annotation(
                     x=xm,
@@ -1878,11 +1879,17 @@ with tabs[2]:
     # ────────────────────────────────────────────────────────────────────────
     # ────────────────────────────────────────────────────────────────────────
 
+    # Axe Y : on plafonne à FL100 (10000 ft) ou légèrement au-dessus de la trajectoire
+    FL100_FT = 10000
+    y_air_valid = [y for y in y_air if y is not None]
+    y_max = min(FL100_FT, max(y_air_valid) * 1.35 + 1500) if y_air_valid else FL100_FT
+
     fig.update_layout(
         height=500,
         margin=dict(l=20, r=20, t=20, b=20),
         xaxis_title="Distance cumulée (NM)",
         yaxis_title="Altitude (ft)",
+        yaxis=dict(range=[0, y_max]),
         legend_orientation="h",
     )
 
