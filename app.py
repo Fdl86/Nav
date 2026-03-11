@@ -532,12 +532,12 @@ def mean_branch_pressure_wind(
 def mean_branch_surface_wind(
     items: List[dict],
     point_indices: List[int],
-    gen_hour: datetime,
+    hour_key: str,
 ) -> Optional[Tuple[float, float]]:
     pairs = []
     for idx in point_indices:
         item = items[idx]
-        hour_idx = get_hour_index(item.get("hourly", {}).get("time", []), gen_hour)
+        hour_idx = get_hour_index(item.get("hourly", {}).get("time", []), hour_key)
         pair = extract_surface_wind_for_item(item, hour_idx)
         if pair:
             pairs.append(pair)
@@ -783,15 +783,6 @@ def fetch_elevations(lats: Tuple[float, ...], lons: Tuple[float, ...]):
         return all_vals if all_vals else None
     except Exception:
         return None
-
-def arrival_target_alt_ft(arr_elev_ft: float, end_type: str, is_aerodrome: bool, verticale_ft: float, tdp_ft: float, cruise_alt_ft: float):
-    if not is_aerodrome or arr_elev_ft <= 0:
-        return cruise_alt_ft
-    if end_type == "verticale":
-        return arr_elev_ft + verticale_ft
-    if end_type == "tour_de_piste":
-        return arr_elev_ft + tdp_ft
-    return arr_elev_ft + 300.0
 
 def build_vertical_profile(
     nav_points: List[NavPoint],
