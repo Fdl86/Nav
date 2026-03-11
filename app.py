@@ -790,55 +790,16 @@ def fetch_profile_wx(
     mid_lons: Tuple[float, ...],
 ) -> Optional[List[dict]]:
     """
-    Pour chaque point milieu de branche, récupère via ICON-D2 :
-    - Variables de surface  : cloud_cover, cloud_cover_low, cloud_cover_mid
-    - Variables de pression : wind + geopotential_height à tous niveaux DWD
-    Deux appels séparés car Open-Meteo ne mélange pas surface et pressure-level.
-    Retourne une liste de dicts fusionnés, un par point milieu.
+    Récupère uniquement cloud_cover (surface) pour le profil.
+    Le vent à l'altitude de croisière est déjà dans leg.wind_dir_deg / leg.wind_speed_kt
+    issu de build_route — aucun appel pression supplémentaire nécessaire.
     """
     if not mid_lats:
         return None
-
-    # ── Appel 1 : variables de surface ──
-    surface_vars = ("cloud_cover", "cloud_cover_low", "cloud_cover_mid")
-    surface_items = None
     try:
-        surface_items = fetch_openmeteo_hour_block("ICON-D2", mid_lats, mid_lons, surface_vars)
+        return fetch_openmeteo_hour_block("ICON-D2", mid_lats, mid_lons, ("cloud_cover",))
     except Exception:
-        pass
-
-    # ── Appel 2 : variables de niveau de pression ──
-    pressure_levels = [1000, 975, 950, 925, 900, 850, 800, 700, 600, 500, 400, 300, 250, 200]
-    pres_vars = tuple(
-        var
-        for p in pressure_levels
-        for var in (
-            f"wind_speed_{p}hPa",
-            f"wind_direction_{p}hPa",
-            f"geopotential_height_{p}hPa",
-        )
-    )
-    pres_items = None
-    try:
-        pres_items = fetch_openmeteo_hour_block("ICON-D2", mid_lats, mid_lons, pres_vars)
-    except Exception:
-        pass
-
-    if surface_items is None and pres_items is None:
         return None
-
-    # ── Fusion : on merge les hourly des deux réponses dans un seul dict par point ──
-    n = max(
-        len(surface_items) if surface_items else 0,
-        len(pres_items)    if pres_items    else 0,
-    )
-    merged = []
-    for i in range(n):
-        s_hourly = surface_items[i].get("hourly", {}) if surface_items and i < len(surface_items) else {}
-        p_hourly = pres_items[i].get("hourly", {})    if pres_items    and i < len(pres_items)    else {}
-        combined = {**s_hourly, **p_hourly}
-        merged.append({"hourly": combined})
-    return merged
 
 
 def build_vertical_profile(
@@ -1743,54 +1704,42 @@ with tabs[2]:
             align="center",
         )
 
-    # ── Nuages et vent (si disponibles) ─────────────────────────────────────
+    # ── Vent + Nuages sur le profil ─────────────────────────────────────────
+    # Bornes X de chaque branche
+    cumul = 0.0
+    leg_x_ranges = []
+    for leg in legs:
+        xs = round(cumul, 1)
+        xe = round(cumul + leg.distance_nm, 1)
+        leg_x_ranges.append((xs, xe, round((xs + xe) / 2.0, 1)))
+        cumul = xe
+
+    def cover_to_metar(pct: float) -> str:
+        if pct < 12.5: return "SKC"
+        if pct < 37.5: return "FEW"
+        if pct < 62.5: return "SCT"
+        if pct < 87.5: return "BKN"
+        return "OVC"
+
+    def cover_to_alpha(pct: float) -> float:
+        if pct < 12.5: return 0.0
+        if pct < 37.5: return 0.14
+        if pct < 62.5: return 0.22
+        if pct < 87.5: return 0.34
+        return 0.48
+
+    # ── Nuages (nécessite profile_wx) ──
     if profile_wx:
         hour_key = generation_hour_utc().strftime("%Y-%m-%dT%H:%M")
-
-        def cover_to_metar(pct: float) -> str:
-            if pct < 12.5:
-                return "SKC"
-            if pct < 37.5:
-                return "FEW"
-            if pct < 62.5:
-                return "SCT"
-            if pct < 87.5:
-                return "BKN"
-            return "OVC"
-
-        def cover_to_alpha(pct: float) -> float:
-            if pct < 12.5:
-                return 0.0
-            if pct < 37.5:
-                return 0.14
-            if pct < 62.5:
-                return 0.22
-            if pct < 87.5:
-                return 0.34
-            return 0.48
-
-        cumul = 0.0
-        leg_x_ranges = []
-        for leg in legs:
-            xs = round(cumul, 1)
-            xe = round(cumul + leg.distance_nm, 1)
-            leg_x_ranges.append((xs, xe, round((xs + xe) / 2.0, 1)))
-            cumul = xe
-
         for leg_i, leg in enumerate(legs):
             if leg_i >= len(profile_wx):
                 break
-
-            item = profile_wx[leg_i]
-            hourly = item.get("hourly", {})
+            hourly = profile_wx[leg_i].get("hourly", {})
             h_idx = get_hour_index(hourly.get("time", []), hour_key)
             if h_idx is None:
                 continue
-
             xs, xe, xm = leg_x_ranges[leg_i]
             cruise_y = float(leg.altitude_ft)
-
-            # Zone nuageuse relative à l'avion : +1000 à +2000 ft
             cc_arr = hourly.get("cloud_cover", [])
             cc_val = float(cc_arr[h_idx]) if h_idx < len(cc_arr) and cc_arr[h_idx] is not None else None
             if cc_val is not None:
@@ -1799,10 +1748,8 @@ with tabs[2]:
                     cloud_y0 = cruise_y + 1000.0
                     cloud_y1 = cruise_y + 2000.0
                     fig.add_hrect(
-                        x0=xs,
-                        x1=xe,
-                        y0=cloud_y0,
-                        y1=cloud_y1,
+                        x0=xs, x1=xe,
+                        y0=cloud_y0, y1=cloud_y1,
                         fillcolor=f"rgba(160,170,185,{alpha})",
                         line_width=0,
                         layer="below",
@@ -1810,33 +1757,28 @@ with tabs[2]:
                     fig.add_annotation(
                         x=xm,
                         y=(cloud_y0 + cloud_y1) / 2.0,
-                        text=cover_to_metar(cc_val),
+                        text=f"{cover_to_metar(cc_val)} {int(round(cc_val))}%",
                         showarrow=False,
-                        font=dict(size=10, color="rgba(60,70,90,0.95)", family="monospace"),
+                        font=dict(size=10, color="rgba(220,230,255,0.95)", family="monospace"),
+                        bgcolor="rgba(30,40,60,0.55)",
+                        borderpad=2,
                     )
 
-            # Vent à l'altitude de l'avion, affiché au voisinage immédiat de la trajectoire
-            cruise_wind = interpolate_pressure_wind_for_item(
-                item,
-                h_idx,
-                leg.altitude_ft,
-                DWD_LEVELS_M,
-            )
-            if cruise_wind:
-                wind_dir, wind_spd = float(cruise_wind[0]), float(cruise_wind[1])
-                wind_y = cruise_y + 140.0
-
-                fig.add_annotation(
-                    x=xm,
-                    y=wind_y,
-                    text=f"Vent {route3(wind_dir)}/{wind_spd:.0f}kt",
-                    showarrow=False,
-                    font=dict(size=9, color="#b91c1c", family="monospace"),
-                    bgcolor="rgba(255,255,255,0.78)",
-                    bordercolor="#b91c1c",
-                    borderwidth=1,
-                    borderpad=3,
-                )
+    # ── Vent à l'altitude de croisière (toujours disponible via leg) ──
+    for leg_i, leg in enumerate(legs):
+        xs, xe, xm = leg_x_ranges[leg_i]
+        cruise_y = float(leg.altitude_ft)
+        fig.add_annotation(
+            x=xm,
+            y=cruise_y + 140.0,
+            text=f"Vent {route3(leg.wind_dir_deg)}/{leg.wind_speed_kt:.0f}kt",
+            showarrow=False,
+            font=dict(size=9, color="#b91c1c", family="monospace"),
+            bgcolor="rgba(255,255,255,0.78)",
+            bordercolor="#b91c1c",
+            borderwidth=1,
+            borderpad=3,
+        )
 
     # Axe Y : trajectoire + 2000 ft, avec marge pour VT/TDP et relief
     y_air_valid = [y for y in y_air if y is not None]
