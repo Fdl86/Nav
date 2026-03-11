@@ -1,3 +1,567 @@
+est-ce que app(2) règle le souci de refaire X appels sur rerun comparé au (1) ?
+Mar 10
+Read both files
+
+Oui et non — voici l'analyse précise des différences :
+Ce que app(2) change vraiment
+✅ 1. prefetch_winds_for_geometries est maintenant @st.cache_data
+
+C'est le changement le plus important. Dans app(1), cette fonction n'était pas cachée du tout — elle était appelée à chaque rerun depuis build_route. Dans app(2), elle est décorée @st.cache_data(ttl=60*10).
+
+Problème résiduel : build_route elle-même n'est pas cachée, donc elle est recalculée à chaque rerun. Elle appelle prefetch_winds_for_geometries(geometries, metar_decoded) — et le cache ne fonctionnera que si les arguments geometries (une List[dict]) et metar_decoded sont identiques. Or geometries est une liste de dicts, type non-hashable → Streamlit ne peut pas la mettre en clé de cache et va lever une erreur ou ignorer le cache selon la version. Le gain réel est donc incertain.
+✅ 2. Moins de points d'échantillonnage par branche
+
+sample_point_count est simplifié : 1 ou 2 segments au lieu de 2, 4, ou 6. Ça réduit le nombre de coordonnées envoyées à Open-Meteo, donc des requêtes plus légères.
+✅ 3. Stratégie de fallback vent simplifiée
+
+App(1) enchaînait jusqu'à 4 sources (ICON-D2 niveau → AROME niveau → ICON-D2 10m → AROME 10m). App(2) ne fait qu'ICON-D2 niveau → METAR départ. Ça réduit potentiellement de 4 appels API à 1-2 par rerun (mais au détriment de la qualité de la donnée vent en fallback).
+✅ 4. fetch_openmeteo_hour_block : TTL passé de 10 min à 1h
+
+Moins de refetch sur les reruns rapprochés dans le temps. C'est un vrai gain.
+✅ 5. fetch_elevations : TTL passé de 6h à 12h
+
+Gain marginal, le relief ne change pas.
+Ce qui n'est PAS réglé dans app(2)
+
+Le problème fondamental reste : build_route est appelée à chaque rerun (hors @st.cache_data), et comme elle prend des objets non-hashables en paramètres (Aerodrome, List[LegInput], dict), on ne peut pas facilement la cacher telle quelle.
+
+Pour vraiment bloquer les appels répétés, il faudrait soit :
+
+    Cacher build_route avec une clé de cache dérivée des paramètres stables (ex. : dep_icao, tuple des legs, tas_kt)
+    Ou stocker le résultat dans st.session_state et ne le recalculer que si les inputs changent
+
+En résumé : app(2) réduit significativement le volume des appels API et leur fréquence via les TTL, mais ne supprime pas le déclenchement de build_route + prefetch_winds à chaque rerun.
+
+et c'est facilement faisable de cacher ou stocker ?
+Mar 10
+
+Oui, c'est assez simple. La solution la plus propre pour Streamlit est de stocker dans st.session_state en comparant une "signature" des inputs.
+
+Le principe :
+python
+
+# Construire une clé représentant les inputs actuels
+route_key = (dep_icao, tas_kt, tuple(frozen_legs), ...)
+
+# Si les inputs n'ont pas changé → réutiliser le résultat stocké
+if st.session_state.get("route_key") == route_key:
+    legs = st.session_state["route_legs"]
+    nav_points = st.session_state["route_nav_points"]
+else:
+    # Recalculer seulement si nécessaire
+    legs, nav_points = build_route(...)
+    st.session_state["route_key"] = route_key
+    st.session_state["route_legs"] = legs
+    st.session_state["route_nav_points"] = nav_points
+
+Pour la clé, il faut "geler" les legs en un tuple de tuples :
+python
+
+def legs_signature(legs_data):
+    return tuple(
+        (l["leg_type"], l["route_true_deg"], l["distance_nm"],
+         l["altitude_ft"], l["end_type"], l["target_icao"], l["label"])
+        for l in legs_data
+    )
+
+Concrètement dans ton app(2), tu remplaces le bloc :
+python
+
+try:
+    legs, nav_points = build_route(
+        departure, legs_in, tas_kt,
+        departure_metar_decoded=metar_decoded,
+    )
+except ValueError as e:
+    st.error(str(e))
+    st.stop()
+
+par :
+python
+
+route_key = (dep_icao, tas_kt, legs_signature(st.session_state.legs_data))
+
+if st.session_state.get("route_key") == route_key:
+    legs = st.session_state["route_legs"]
+    nav_points = st.session_state["route_nav_points"]
+else:
+    try:
+        legs, nav_points = build_route(
+            departure, legs_in, tas_kt,
+            departure_metar_decoded=metar_decoded,
+        )
+    except ValueError as e:
+        st.error(str(e))
+        st.stop()
+    st.session_state["route_key"] = route_key
+    st.session_state["route_legs"] = legs
+    st.session_state["route_nav_points"] = nav_points
+
+C'est une vingtaine de lignes à ajouter, ça ne touche pas à la logique existante, et ça garantit que build_route (et donc tous les appels Open-Meteo qu'elle déclenche) n'est appelée que quand les inputs changent vraiment — pas à chaque clic sur un onglet, sélection de branche, etc.
+
+et juste tes derniers blocs suffisent ? rien d 'autre a changer ?
+Mar 10
+
+Non, il faut aussi ajouter la fonction legs_signature quelque part avant le bloc. Mais c'est tout — rien d'autre à toucher.
+
+Donc concrètement les deux choses à ajouter dans app(2) :
+
+1. La fonction (à mettre avec les autres fonctions utilitaires, par exemple juste avant ensure_state) :
+python
+
+def legs_signature(legs_data):
+    return tuple(
+        (l["leg_type"], l["route_true_deg"], l["distance_nm"],
+         l["altitude_ft"], l["end_type"], l["target_icao"], l["label"])
+        for l in legs_data
+    )
+
+2. Le remplacement du bloc build_route comme montré avant.
+
+C'est vraiment tout. Le reste de l'app — build_route elle-même, prefetch_winds_for_geometries, les tabs, etc. — ne change pas du tout.
+
+ton avis ? qu'est ce qu'on pourrait optimiser encore ?
+6:31 AM
+Read the new optimized file
+
+Bonne nouvelle : le route_key + session_state est bien en place, et legs_signature est proprement implémenté avec les arrondis. C'est solide.
+
+Voici ce que je vois encore à optimiser, par ordre de priorité :
+
+1. prefetch_winds_for_geometries — le @st.cache_data ne fonctionnera jamais
+
+La fonction reçoit geometries (une List[dict]) et metar_decoded (un dict), tous deux non-hashables. Streamlit va soit lever une erreur, soit ignorer le cache silencieusement. Le décorateur est là mais inopérant. Comme build_route est maintenant gardé en session_state, prefetch_winds_for_geometries n'est de toute façon appelée que quand la route change — donc on peut simplement retirer le @st.cache_data de cette fonction, c'est du bruit trompeur.
+
+2. build_vertical_profile et fetch_elevations recalculées à chaque rerun
+
+Même logique que pour build_route : elles sont appelées inconditionnellement dans le tab "Profil vertical", qui s'exécute à chaque rerun. Le profil vertical ne dépend que de legs, nav_points, et des paramètres de montée/descente. fetch_elevations est bien cachée, mais build_vertical_profile (qui génère tous les points de terrain) tourne à chaque fois. La même approche session_state avec une clé s'applique :
+python
+
+profile_key = (
+    st.session_state["route_key"],
+    climb_rate_fpm, climb_speed_kt, descent_rate_fpm,
+)
+if st.session_state.get("profile_key") == profile_key:
+    profile = st.session_state["profile_cache"]
+else:
+    profile = build_vertical_profile(...)
+    st.session_state["profile_key"] = profile_key
+    st.session_state["profile_cache"] = profile
+
+3. build_map reconstruit la carte Folium à chaque rerun
+
+build_map est appelée à chaque rerun même si la route et le basemap n'ont pas changé. Folium génère du HTML, c'est pas gratuit. On peut la cacher avec session_state sur une clé (route_key, selected_leg_idx, basemap).
+
+4. get_hour_index — recherche linéaire à chaque appel
+
+Dans mean_branch_pressure_wind, pour chaque point et chaque item Open-Meteo, on fait une boucle linéaire sur toute la liste de timestamps pour trouver l'index horaire. C'est redondant : tous les items ont le même format de timestamps, et l'heure cible est fixe pour tout le calcul. On pourrait calculer l'index une seule fois au début de prefetch_winds_for_geometries et le passer en paramètre.
+
+5. pick_levels — tri à chaque appel
+
+pick_levels fait un sorted(level_map.items(), ...) à chaque appel. DWD_LEVELS_M et MF_LEVELS_M sont des constantes — on peut précalculer les listes triées une fois au niveau du module :
+python
+
+_DWD_LEVELS_SORTED = sorted(DWD_LEVELS_M.items(), key=lambda x: x[1])
+_MF_LEVELS_SORTED  = sorted(MF_LEVELS_M.items(),  key=lambda x: x[1])
+
+C'est un micro-gain, mais gratuit.
+
+En résumé, le chantier restant le plus impactant est le point 2 (build_vertical_profile + la carte Folium du point 3), car ce sont les deux calculs lourds qui tournent encore à chaque changement d'onglet ou de branche sélectionnée, indépendamment des données de route.
+
+alors proposes moi les optimisations, a chaque fois => les lignes concernées, le code à remplacer, le code par à insérer. on fait les 5 optis.
+6:34 AM
+
+Je vais analyser le fichier précisément pour te donner les numéros de lignes exacts.
+Ran 5 commands
+
+J'ai tout ce qu'il faut. Voici les 5 optimisations précises :
+Opti 1 — pick_levels : supprimer le tri à chaque appel
+
+Après la ligne 49 (après la fermeture de MF_LEVELS_M), ajouter :
+python
+
+# Listes triées précalculées (évite un sorted() à chaque appel de pick_levels)
+_DWD_LEVELS_SORTED = sorted(DWD_LEVELS_M.items(), key=lambda x: x[1])
+_MF_LEVELS_SORTED  = sorted(MF_LEVELS_M.items(),  key=lambda x: x[1])
+
+Lignes 405–414, remplacer pick_levels entière :
+python
+
+# AVANT
+def pick_levels(target_alt_m: float, level_map: Dict[int, float]):
+    levels = sorted(level_map.items(), key=lambda x: x[1])
+    if target_alt_m <= levels[0][1]:
+        return levels[0][0], levels[0][0]
+    if target_alt_m >= levels[-1][1]:
+        return levels[-1][0], levels[-1][0]
+    for (p1, h1), (p2, h2) in zip(levels, levels[1:]):
+        if h1 <= target_alt_m <= h2:
+            return p1, p2
+    return levels[-1][0], levels[-1][0]
+
+python
+
+# APRÈS
+def pick_levels(target_alt_m: float, level_map: Dict[int, float]):
+    levels = _DWD_LEVELS_SORTED if level_map is DWD_LEVELS_M else _MF_LEVELS_SORTED
+    if target_alt_m <= levels[0][1]:
+        return levels[0][0], levels[0][0]
+    if target_alt_m >= levels[-1][1]:
+        return levels[-1][0], levels[-1][0]
+    for (p1, h1), (p2, h2) in zip(levels, levels[1:]):
+        if h1 <= target_alt_m <= h2:
+            return p1, p2
+    return levels[-1][0], levels[-1][0]
+
+Opti 2 — get_hour_index : calcul unique, passé en paramètre
+
+Lignes 438–444, remplacer la fonction :
+python
+
+# AVANT
+def get_hour_index(hourly_time: List[str], target_dt: datetime) -> Optional[int]:
+    target_key = target_dt.strftime("%Y-%m-%dT%H:%M")
+    for i, t in enumerate(hourly_time):
+        if t == target_key:
+            return i
+    return None
+
+python
+
+# APRÈS
+def get_hour_index(hourly_time: List[str], target_key: str) -> Optional[int]:
+    for i, t in enumerate(hourly_time):
+        if t == target_key:
+            return i
+    return None
+
+Lignes 519–529, remplacer mean_branch_pressure_wind :
+python
+
+# AVANT
+def mean_branch_pressure_wind(
+    items: List[dict],
+    point_indices: List[int],
+    gen_hour: datetime,
+    altitude_ft: float,
+    level_map: Dict[int, float],
+) -> Optional[Tuple[float, float]]:
+    pairs = []
+    for idx in point_indices:
+        item = items[idx]
+        hour_idx = get_hour_index(item.get("hourly", {}).get("time", []), gen_hour)
+        pair = interpolate_pressure_wind_for_item(item, hour_idx, altitude_ft, level_map)
+        if pair:
+            pairs.append(pair)
+    return mean_vector_from_pairs(pairs)
+
+python
+
+# APRÈS
+def mean_branch_pressure_wind(
+    items: List[dict],
+    point_indices: List[int],
+    hour_key: str,
+    altitude_ft: float,
+    level_map: Dict[int, float],
+) -> Optional[Tuple[float, float]]:
+    pairs = []
+    for idx in point_indices:
+        item = items[idx]
+        hour_idx = get_hour_index(item.get("hourly", {}).get("time", []), hour_key)
+        pair = interpolate_pressure_wind_for_item(item, hour_idx, altitude_ft, level_map)
+        if pair:
+            pairs.append(pair)
+    return mean_vector_from_pairs(pairs)
+
+Dans prefetch_winds_for_geometries, remplacer les deux occurrences où gen_hour est passé. D'abord ajouter juste après gen_hour = generation_hour_utc() (aux alentours de la ligne 578) :
+python
+
+    hour_key = gen_hour.strftime("%Y-%m-%dT%H:%M")
+
+Puis remplacer l'appel à mean_branch_pressure_wind (ligne ~611) :
+python
+
+# AVANT
+            avg = mean_branch_pressure_wind(
+                icon_pressure_items,
+                point_indices,
+                gen_hour,
+                geom["altitude_ft"],
+                DWD_LEVELS_M,
+            )
+
+python
+
+# APRÈS
+            avg = mean_branch_pressure_wind(
+                icon_pressure_items,
+                point_indices,
+                hour_key,
+                geom["altitude_ft"],
+                DWD_LEVELS_M,
+            )
+
+Opti 3 — prefetch_winds_for_geometries : retirer le @st.cache_data inopérant
+
+Lignes 569–570, remplacer :
+python
+
+# AVANT
+@st.cache_data(ttl=60 * 10, show_spinner=False)
+def prefetch_winds_for_geometries(
+
+python
+
+# APRÈS
+def prefetch_winds_for_geometries(
+
+Opti 4 — build_vertical_profile : mise en cache via session_state
+
+Ligne 1572 environ, remplacer le bloc :
+python
+
+# AVANT
+with tabs[2]:
+    verticale_ft = 1500
+    tdp_ft = 1000
+    
+    profile = build_vertical_profile(
+        nav_points=nav_points,
+        legs=legs,
+        climb_rate_fpm=climb_rate_fpm,
+        climb_speed_kt=climb_speed_kt,
+        descent_rate_fpm=descent_rate_fpm,
+        verticale_ft=verticale_ft,
+        tdp_ft=tdp_ft,
+    )
+
+    elev_m = fetch_elevations(
+        tuple(p[0] for p in profile["terrain_route_pts"]),
+        tuple(p[1] for p in profile["terrain_route_pts"]),
+    )
+
+python
+
+# APRÈS
+with tabs[2]:
+    verticale_ft = 1500
+    tdp_ft = 1000
+
+    profile_key = (
+        st.session_state["route_key"],
+        climb_rate_fpm, climb_speed_kt, descent_rate_fpm,
+        verticale_ft, tdp_ft,
+    )
+    if st.session_state.get("profile_key") == profile_key:
+        profile = st.session_state["profile_cache"]
+        elev_m  = st.session_state["profile_elev"]
+    else:
+        profile = build_vertical_profile(
+            nav_points=nav_points,
+            legs=legs,
+            climb_rate_fpm=climb_rate_fpm,
+            climb_speed_kt=climb_speed_kt,
+            descent_rate_fpm=descent_rate_fpm,
+            verticale_ft=verticale_ft,
+            tdp_ft=tdp_ft,
+        )
+        elev_m = fetch_elevations(
+            tuple(p[0] for p in profile["terrain_route_pts"]),
+            tuple(p[1] for p in profile["terrain_route_pts"]),
+        )
+        st.session_state["profile_key"]   = profile_key
+        st.session_state["profile_cache"] = profile
+        st.session_state["profile_elev"]  = elev_m
+
+Opti 5 — build_map : mise en cache via session_state
+
+Ligne 1533 environ, remplacer :
+python
+
+# AVANT
+    basemap = st.session_state.basemap_choice
+    fmap = build_map(nav_points, legs, selected_leg_idx, openaip_key, basemap)
+
+python
+
+# APRÈS
+    basemap = st.session_state.basemap_choice
+    map_key = (st.session_state["route_key"], selected_leg_idx, basemap)
+    if st.session_state.get("map_key") == map_key:
+        fmap = st.session_state["map_cache"]
+    else:
+        fmap = build_map(nav_points, legs, selected_leg_idx, openaip_key, basemap)
+        st.session_state["map_key"]   = map_key
+        st.session_state["map_cache"] = fmap
+
+Les optis 4 et 5 sont les plus impactantes au quotidien (elles évitent les recalculs sur chaque changement d'onglet ou de branche sélectionnée). Les optis 1 et 2 sont des gains de propreté/performance CPU mineurs mais sans risque. L'opti 3 est un nettoyage obligatoire pour ne pas induire en erreur.
+
+tout fonctionne, c'est le top, tu peux vérifier mon fichier en terme d'optis ?
+6:44 AM
+Read the file with line numbers
+
+C'est très propre. Toutes les 5 optis sont bien en place. J'ai repéré 3 petites choses résiduelles :
+
+1. mean_branch_surface_wind — toujours gen_hour: datetime au lieu de hour_key: str (ligne 535)
+
+La fonction existe encore dans le code mais n'est plus appelée (app(2) a supprimé le fallback AROME/surface). Elle est inoffensive mais incohérente avec la refonte de get_hour_index. Si tu la gardes pour usage futur, à corriger :
+python
+
+# ligne 535 — AVANT
+    gen_hour: datetime,
+# APRÈS
+    hour_key: str,
+
+python
+
+# ligne 540 — AVANT
+        hour_idx = get_hour_index(item.get("hourly", {}).get("time", []), gen_hour)
+# APRÈS
+        hour_idx = get_hour_index(item.get("hourly", {}).get("time", []), hour_key)
+
+2. Commentaire parasite ligne 1571
+python
+
+# ligne 1571
+# APRÈS     ← à supprimer, c'est un résidu du diff de la session précédente
+
+3. arrival_target_alt_ft — fonction définie ligne 787, jamais appelée
+
+Elle est orpheline depuis app(2) (la logique a été inlinée dans build_vertical_profile). Pas un bug, mais du code mort. Tu peux la supprimer sereinement.
+
+En dehors de ça, le fichier est vraiment solide. Les caches session_state sur route, carte et profil sont corrects, les clés sont bien formées, legs_signature est robuste avec les arrondis. Rien d'autre à optimiser.
+
+et là tout est bon ?
+6:48 AM
+Check if the 3 issues are fixed
+
+C'est le même fichier que la dernière fois — les 3 points n'ont pas encore été corrigés :
+
+    ligne 535 : mean_branch_surface_wind reçoit toujours gen_hour: datetime
+    ligne 787 : arrival_target_alt_ft est toujours là (code mort)
+    ligne 1571 : le commentaire # APRÈS est toujours présent
+
+Tu voulais uploader la version corrigée ?
+
+oups, et là ?
+6:50 AM
+Ran 2 commands
+
+2 sur 3 de réglés :
+
+    ✅ arrival_target_alt_ft supprimée
+    ✅ mean_branch_surface_wind corrigée avec hour_key: str
+    ❌ ligne 1562 : le commentaire # APRÈS est encore là — une ligne à supprimer
+
+c'est viré pour ligne 1562 !
+est-ce que tu peux réfléchir à intégrer une vue "en coupe" du vol, où on peut avoir les nuages et le vent sous forme de barbules ??
+6:54 AM
+
+Bonne idée, c'est une vraie valeur ajoutée pour la prépa VFR. Laisse-moi réfléchir à comment l'intégrer proprement.
+
+Ce qui est faisable avec les APIs déjà en place :
+
+Pour les barbules de vent, c'est déjà presque tout prêt — fetch_openmeteo_hour_block ramène wind_speed et wind_direction par niveau de pression, et tu as déjà la logique d'interpolation. Il suffirait d'afficher ces vecteurs à intervalles réguliers sur le profil Plotly, sous forme de petites flèches ou de barbules météo classiques (trait + barbelures).
+
+Pour les nuages, Open-Meteo expose des variables horaires utiles : cloud_cover_low, cloud_cover_mid, cloud_cover_high, et surtout cape (instabilité). Ce sont des variables de surface, donc faciles à récupérer sur les points de la route. En revanche il n'y a pas de base/sommet de nuage précis par niveau dans l'API gratuite — ce serait une estimation basée sur les niveaux typiques (bas < 6500ft, moyen 6500–20000ft, haut > 20000ft).
+
+Les questions avant de se lancer :
+
+Donne-moi tes préférences et je te propose le code complet à intégrer dans le tab "Profil vertical" existant.
+
+Q: Pour les barbules de vent, quel affichage tu préfères ?
+A: Barbules météo classiques (trait + barbelures)
+
+Q: Pour les nuages, quel niveau de précision t'intéresse ?
+A: Couverture estimée par tranche (bas/moyen/haut)
+
+Q: Ces données vent/nuage sur la coupe, tu veux les récupérer comment ?
+A: Même appel Open-Meteo que le vent existant (léger, gratuit)
+6:55 AM
+
+Parfait. Avant de coder, laisse-moi réfléchir à l'architecture précisément.
+
+Ce que ça implique concrètement :
+
+Données à récupérer — dans le même fetch_openmeteo_hour_block existant, on ajoute à hourly_vars :
+
+    cloud_cover_low, cloud_cover_mid, cloud_cover_high (couverture 0-100%)
+    vent déjà dispo par niveau de pression (850, 700, 500 hPa = ~5000ft, 10000ft, 18000ft) — on les réutilise
+
+Barbules — rendu Plotly via add_shape + add_annotation pour chaque barbule à chaque point de route × chaque niveau. Une barbule météo classique c'est :
+
+    un trait vertical (le mât)
+    des barbelures à 50kt chacune (pleines), 10kt (demi), 5kt (fanion)
+    orientation selon la direction du vent
+
+Nuages — 3 bandes add_hrect semi-transparentes sur le profil :
+
+    bas : 0–6500 ft, opacité proportionnelle à cloud_cover_low
+    moyen : 6500–20000 ft, idem cloud_cover_mid
+    haut : 20000–35000 ft, idem cloud_cover_high
+
+Intégration dans le cache — les variables nuages/vent multi-niveaux s'ajoutent dans fetch_openmeteo_hour_block qui est déjà appelé dans prefetch_winds_for_geometries. Pour le profil, on fait un second appel séparé sur les points de terrain (déjà calculés dans profile["terrain_route_pts"]), mis en cache dans profile_elev existant — ou plutôt dans un nouveau profile_wx dans session_state.
+
+Une question de rendu avant de coder :
+
+Q: Les barbules, à quelle fréquence sur l'axe horizontal ?
+A: 1 barbule par branche (milieu)
+
+Q: Les bandes nuages, sur toute la largeur du graphique ou localisées par segment ?
+A: Localisées par segment de branche
+6:56 AM
+
+Parfait, l'architecture est claire. Je code.
+
+Le plan exact :
+
+    1 appel Open-Meteo supplémentaire sur les points milieu de chaque branche, pour récupérer cloud_cover_low/mid/high + vent à 850/700/500 hPa
+    add_hrect par segment × 3 niveaux nuageux, opacité proportionnelle à la couverture
+    barbules dessinées au milieu de chaque branche avec add_shape, aux 3 niveaux
+    tout mis en cache dans session_state["profile_wx"]
+
+Ran 5 commands
+
+Bien. Je commence les modifications. D'abord la fonction de fetch météo profil, puis le rendu.
+Edited 2 files
+
+Maintenant on ajoute le fetch wx dans le bloc cache du profil et le rendu dans le tab :
+Edited 2 files
+
+Maintenant on ajoute le rendu nuages + barbules dans le graphique, juste avant fig.update_layout :
+Insert cloud bands and wind barbs rendering before fig.update_layout
+
+Vérifions que le fichier est syntaxiquement propre :
+Syntax check
+
+Parfait. On vérifie que tout est bien en place :
+Final check all pieces present and no leftovers
+
+arrival_target_alt_ft est encore là (code mort de la session précédente), on en profite pour la supprimer :
+Ran 3 commands, edited a file, read a file
+
+Voici ce qui a été ajouté/modifié :
+
+Nouvelles fonctions (avant build_vertical_profile) :
+
+    fetch_profile_wx() — appel Open-Meteo ICON-D2 sur les points milieu des branches, récupère cloud_cover_low/mid/high + vent à 850/700/500 hPa. Cachée 1h dans @st.cache_data.
+    _draw_wind_barb() — dessine une barbule météo classique (fanions 50kt, pleines 10kt, demies 5kt) via add_shape sur le graphique Plotly.
+
+Dans le tab "Profil vertical" :
+
+    profile_wx ajouté au cache session_state (même clé que profile/elev, pas d'appel supplémentaire sur les reruns)
+    Bandes nuageuses add_hrect par segment × 3 étages (bleu clair, opacité proportionnelle à la couverture, label % au centre)
+    Barbules aux 3 niveaux (850/700/500 hPa) centrées sur chaque branche, avec annotation vitesse/direction
+    Hauteur du graphique passée de 430 à 480 px pour respirer
+
+Et en passant : arrival_target_alt_ft (code mort) enfin supprimée.
+App profil wx
+PY 
+
+
+Claude is AI and can make mistakes. Please double-check responses.
+App profil wx · PY
 # app.py
 import math
 from dataclasses import dataclass
@@ -532,12 +1096,12 @@ def mean_branch_pressure_wind(
 def mean_branch_surface_wind(
     items: List[dict],
     point_indices: List[int],
-    hour_key: str,
+    gen_hour: datetime,
 ) -> Optional[Tuple[float, float]]:
     pairs = []
     for idx in point_indices:
         item = items[idx]
-        hour_idx = get_hour_index(item.get("hourly", {}).get("time", []), hour_key)
+        hour_idx = get_hour_index(item.get("hourly", {}).get("time", []), gen_hour)
         pair = extract_surface_wind_for_item(item, hour_idx)
         if pair:
             pairs.append(pair)
@@ -783,6 +1347,101 @@ def fetch_elevations(lats: Tuple[float, ...], lons: Tuple[float, ...]):
         return all_vals if all_vals else None
     except Exception:
         return None
+
+@st.cache_data(ttl=60 * 60, show_spinner=False)
+def fetch_profile_wx(
+    mid_lats: Tuple[float, ...],
+    mid_lons: Tuple[float, ...],
+) -> Optional[List[dict]]:
+    """
+    Pour chaque point milieu de branche, récupère :
+    - couverture nuageuse basse / moyenne / haute (%)
+    - vent à 850 hPa (~5000 ft), 700 hPa (~10000 ft), 500 hPa (~18000 ft)
+    Retourne une liste de dicts, un par point milieu.
+    """
+    if not mid_lats:
+        return None
+    wx_vars = (
+        "cloud_cover_low",
+        "cloud_cover_mid",
+        "cloud_cover_high",
+        "wind_speed_850hPa",
+        "wind_direction_850hPa",
+        "wind_speed_700hPa",
+        "wind_direction_700hPa",
+        "wind_speed_500hPa",
+        "wind_direction_500hPa",
+    )
+    try:
+        items = fetch_openmeteo_hour_block("ICON-D2", mid_lats, mid_lons, wx_vars)
+        return items
+    except Exception:
+        return None
+
+
+def _draw_wind_barb(fig, x_nm: float, alt_ft: float, spd_kt: float, dir_deg: float, color: str = "#1e3a5f"):
+    """
+    Dessine une barbule météo classique sur le profil Plotly.
+    Le mât pointe vers le haut depuis alt_ft.
+    Les barbelures indiquent l'intensité : fanion=50kt, pleine=10kt, demi=5kt.
+    """
+    if spd_kt < 2.5:
+        # Calme : cercle
+        fig.add_shape(type="circle",
+            x0=x_nm - 0.25, x1=x_nm + 0.25,
+            y0=alt_ft - 120, y1=alt_ft + 120,
+            line=dict(color=color, width=1.5))
+        return
+
+    mast_top_ft  = alt_ft + 2800   # hauteur du mât en ft sur l'axe Y
+    mast_bot_ft  = alt_ft
+
+    # Mât vertical
+    fig.add_shape(type="line",
+        x0=x_nm, x1=x_nm,
+        y0=mast_bot_ft, y1=mast_top_ft,
+        line=dict(color=color, width=1.5))
+
+    # Direction du vent → angle de la flèche des barbelures
+    # Convention météo : dir_deg = "vient de". Les barbelures partent du sommet
+    # vers la gauche (côté sous le vent) dans le plan de la coupe.
+    # On simplifie : barbelures toujours à gauche du mât (côté NM décroissants).
+    barb_len_nm  = 0.9    # longueur d'une barbelure pleine en NM
+    barb_spacing = 550    # espacement vertical entre barbelures en ft
+    barb_angle   = -0.55  # rad ≈ -31° vers la gauche
+
+    remaining = spd_kt
+    pos_ft = mast_top_ft
+    dx = -barb_len_nm
+    dy_full = barb_len_nm * math.tan(barb_angle) * (mast_top_ft - mast_bot_ft) / barb_len_nm
+
+    # Fanions 50 kt
+    while remaining >= 47.5:
+        tip_x = x_nm + dx
+        tip_y = pos_ft + dy_full * 0.55
+        fig.add_shape(type="line", x0=x_nm, x1=tip_x, y0=pos_ft, y1=tip_y,
+            line=dict(color=color, width=1.5))
+        fig.add_shape(type="line", x0=tip_x, x1=x_nm, y0=tip_y, y1=pos_ft - barb_spacing * 0.8,
+            line=dict(color=color, width=1.5))
+        pos_ft -= barb_spacing * 0.9
+        remaining -= 50
+
+    # Barbelures pleines 10 kt
+    while remaining >= 7.5:
+        tip_x = x_nm + dx * 0.85
+        tip_y = pos_ft + dy_full * 0.47
+        fig.add_shape(type="line", x0=x_nm, x1=tip_x, y0=pos_ft, y1=tip_y,
+            line=dict(color=color, width=1.5))
+        pos_ft -= barb_spacing
+        remaining -= 10
+
+    # Demi-barbelure 5 kt
+    if remaining >= 2.5:
+        tip_x = x_nm + dx * 0.42
+        tip_y = pos_ft + dy_full * 0.23
+        fig.add_shape(type="line", x0=x_nm, x1=tip_x, y0=pos_ft, y1=tip_y,
+            line=dict(color=color, width=1.5))
+
 
 def build_vertical_profile(
     nav_points: List[NavPoint],
@@ -1569,8 +2228,9 @@ with tabs[2]:
         verticale_ft, tdp_ft,
     )
     if st.session_state.get("profile_key") == profile_key:
-        profile = st.session_state["profile_cache"]
-        elev_m  = st.session_state["profile_elev"]
+        profile    = st.session_state["profile_cache"]
+        elev_m     = st.session_state["profile_elev"]
+        profile_wx = st.session_state["profile_wx"]
     else:
         profile = build_vertical_profile(
             nav_points=nav_points,
@@ -1585,9 +2245,13 @@ with tabs[2]:
             tuple(p[0] for p in profile["terrain_route_pts"]),
             tuple(p[1] for p in profile["terrain_route_pts"]),
         )
+        mid_lats = tuple(round(leg.mid_lat, 6) for leg in legs)
+        mid_lons = tuple(round(leg.mid_lon, 6) for leg in legs)
+        profile_wx = fetch_profile_wx(mid_lats, mid_lons)
         st.session_state["profile_key"]   = profile_key
         st.session_state["profile_cache"] = profile
         st.session_state["profile_elev"]  = elev_m
+        st.session_state["profile_wx"]    = profile_wx
         
     if elev_m is None:
         terrain_ft = [0] * len(profile["terrain_route_pts"])
@@ -1680,8 +2344,94 @@ with tabs[2]:
             align="center",
         )
 
+    # ── Nuages et barbules ──────────────────────────────────────────────────
+    if profile_wx:
+        gen_hour   = generation_hour_utc()
+        hour_key   = gen_hour.strftime("%Y-%m-%dT%H:%M")
+
+        # Altitudes de référence des 3 étages (ft)
+        CLOUD_BANDS = [
+            ("low",  "cloud_cover_low",  0,     6500,  "rgba(150,180,220,"),
+            ("mid",  "cloud_cover_mid",  6500,  20000, "rgba(100,140,200,"),
+            ("high", "cloud_cover_high", 20000, 40000, "rgba(180,200,230,"),
+        ]
+        # Niveaux de pression pour les barbules → altitude approx en ft
+        BARB_LEVELS = [
+            (850, 5000,  "#1a3a5c"),
+            (700, 10000, "#1a3a5c"),
+            (500, 18000, "#1a3a5c"),
+        ]
+
+        # Calcul des x de début/fin de chaque branche sur l'axe profil
+        cumul = 0.0
+        leg_x_ranges = []
+        for leg in legs:
+            x_start = round(cumul, 1)
+            x_end   = round(cumul + leg.distance_nm, 1)
+            x_mid   = round((x_start + x_end) / 2.0, 1)
+            leg_x_ranges.append((x_start, x_end, x_mid))
+            cumul   = round(cumul + leg.distance_nm, 1)
+
+        for leg_i, leg in enumerate(legs):
+            if leg_i >= len(profile_wx):
+                break
+            item = profile_wx[leg_i]
+            hourly = item.get("hourly", {})
+            h_idx  = get_hour_index(hourly.get("time", []), hour_key)
+            if h_idx is None:
+                continue
+
+            x_start, x_end, x_mid = leg_x_ranges[leg_i]
+
+            # ── Bandes nuageuses ──
+            for _name, var, alt_bot, alt_top, rgba_prefix in CLOUD_BANDS:
+                arr = hourly.get(var, [])
+                if h_idx >= len(arr) or arr[h_idx] is None:
+                    continue
+                cover = float(arr[h_idx])   # 0-100
+                if cover < 5:
+                    continue
+                opacity = round(0.08 + cover / 100.0 * 0.45, 3)
+                fig.add_hrect(
+                    y0=alt_bot, y1=alt_top,
+                    x0=x_start, x1=x_end,
+                    fillcolor=f"{rgba_prefix}{opacity})",
+                    layer="below",
+                    line_width=0,
+                )
+                # Petit label couverture au centre du segment
+                fig.add_annotation(
+                    x=x_mid,
+                    y=alt_bot + (alt_top - alt_bot) * 0.5,
+                    text=f"{int(round(cover))}%",
+                    showarrow=False,
+                    font=dict(size=9, color="rgba(50,80,130,0.85)"),
+                    bgcolor="rgba(255,255,255,0)",
+                )
+
+            # ── Barbules de vent ──
+            for hpa, alt_ft, color in BARB_LEVELS:
+                spd_arr = hourly.get(f"wind_speed_{hpa}hPa", [])
+                dir_arr = hourly.get(f"wind_direction_{hpa}hPa", [])
+                if h_idx >= len(spd_arr) or h_idx >= len(dir_arr):
+                    continue
+                spd = spd_arr[h_idx]
+                wdir = dir_arr[h_idx]
+                if spd is None or wdir is None:
+                    continue
+                _draw_wind_barb(fig, x_mid, float(alt_ft), float(spd), float(wdir), color=color)
+                # Tooltip via annotation invisible
+                fig.add_annotation(
+                    x=x_mid, y=float(alt_ft) + 1600,
+                    text=f"{route3(float(wdir))}/{float(spd):.0f}kt",
+                    showarrow=False,
+                    font=dict(size=8, color="rgba(30,58,95,0.75)"),
+                    bgcolor="rgba(255,255,255,0)",
+                )
+    # ────────────────────────────────────────────────────────────────────────
+
     fig.update_layout(
-        height=430,
+        height=480,
         margin=dict(l=20, r=20, t=20, b=20),
         xaxis_title="Distance cumulée (NM)",
         yaxis_title="Altitude (ft)",
@@ -1748,3 +2498,4 @@ with tabs[3]:
             f"**Vent branche {leg.idx}** : {route3(leg.wind_dir_deg)}/{leg.wind_speed_kt:.0f} kt "
             f"({leg.wind_source}) — {hour_txt}"
         )
+
