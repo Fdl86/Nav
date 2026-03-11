@@ -532,12 +532,12 @@ def mean_branch_pressure_wind(
 def mean_branch_surface_wind(
     items: List[dict],
     point_indices: List[int],
-    gen_hour: datetime,
+    hour_key: str,
 ) -> Optional[Tuple[float, float]]:
     pairs = []
     for idx in point_indices:
         item = items[idx]
-        hour_idx = get_hour_index(item.get("hourly", {}).get("time", []), gen_hour)
+        hour_idx = get_hour_index(item.get("hourly", {}).get("time", []), hour_key)
         pair = extract_surface_wind_for_item(item, hour_idx)
         if pair:
             pairs.append(pair)
@@ -790,93 +790,23 @@ def fetch_profile_wx(
     mid_lons: Tuple[float, ...],
 ) -> Optional[List[dict]]:
     """
-    Pour chaque point milieu de branche, récupère :
-    - couverture nuageuse basse / moyenne / haute (%)
-    - vent à 850 hPa (~5000 ft), 700 hPa (~10000 ft), 500 hPa (~18000 ft)
-    Retourne une liste de dicts, un par point milieu.
+    Pour chaque point milieu de branche, récupère via ICON-D2 :
+    - cloud_cover_low / mid / high (%)
+    - wind_speed + wind_direction à 850, 700, 500 hPa
+    Retourne une liste de dicts Open-Meteo, un par point milieu.
     """
     if not mid_lats:
         return None
     wx_vars = (
-        "cloud_cover_low",
-        "cloud_cover_mid",
-        "cloud_cover_high",
-        "wind_speed_850hPa",
-        "wind_direction_850hPa",
-        "wind_speed_700hPa",
-        "wind_direction_700hPa",
-        "wind_speed_500hPa",
-        "wind_direction_500hPa",
+        "cloud_cover_low", "cloud_cover_mid", "cloud_cover_high",
+        "wind_speed_850hPa", "wind_direction_850hPa",
+        "wind_speed_700hPa", "wind_direction_700hPa",
+        "wind_speed_500hPa", "wind_direction_500hPa",
     )
     try:
-        items = fetch_openmeteo_hour_block("ICON-D2", mid_lats, mid_lons, wx_vars)
-        return items
+        return fetch_openmeteo_hour_block("ICON-D2", mid_lats, mid_lons, wx_vars)
     except Exception:
         return None
-
-
-def _draw_wind_barb(fig, x_nm: float, alt_ft: float, spd_kt: float, dir_deg: float, color: str = "#1e3a5f"):
-    """
-    Dessine une barbule météo classique sur le profil Plotly.
-    Le mât pointe vers le haut depuis alt_ft.
-    Les barbelures indiquent l'intensité : fanion=50kt, pleine=10kt, demi=5kt.
-    """
-    if spd_kt < 2.5:
-        # Calme : cercle
-        fig.add_shape(type="circle",
-            x0=x_nm - 0.25, x1=x_nm + 0.25,
-            y0=alt_ft - 120, y1=alt_ft + 120,
-            line=dict(color=color, width=1.5))
-        return
-
-    mast_top_ft  = alt_ft + 2800   # hauteur du mât en ft sur l'axe Y
-    mast_bot_ft  = alt_ft
-
-    # Mât vertical
-    fig.add_shape(type="line",
-        x0=x_nm, x1=x_nm,
-        y0=mast_bot_ft, y1=mast_top_ft,
-        line=dict(color=color, width=1.5))
-
-    # Direction du vent → angle de la flèche des barbelures
-    # Convention météo : dir_deg = "vient de". Les barbelures partent du sommet
-    # vers la gauche (côté sous le vent) dans le plan de la coupe.
-    # On simplifie : barbelures toujours à gauche du mât (côté NM décroissants).
-    barb_len_nm  = 0.9    # longueur d'une barbelure pleine en NM
-    barb_spacing = 550    # espacement vertical entre barbelures en ft
-    barb_angle   = -0.55  # rad ≈ -31° vers la gauche
-
-    remaining = spd_kt
-    pos_ft = mast_top_ft
-    dx = -barb_len_nm
-    dy_full = barb_len_nm * math.tan(barb_angle) * (mast_top_ft - mast_bot_ft) / barb_len_nm
-
-    # Fanions 50 kt
-    while remaining >= 47.5:
-        tip_x = x_nm + dx
-        tip_y = pos_ft + dy_full * 0.55
-        fig.add_shape(type="line", x0=x_nm, x1=tip_x, y0=pos_ft, y1=tip_y,
-            line=dict(color=color, width=1.5))
-        fig.add_shape(type="line", x0=tip_x, x1=x_nm, y0=tip_y, y1=pos_ft - barb_spacing * 0.8,
-            line=dict(color=color, width=1.5))
-        pos_ft -= barb_spacing * 0.9
-        remaining -= 50
-
-    # Barbelures pleines 10 kt
-    while remaining >= 7.5:
-        tip_x = x_nm + dx * 0.85
-        tip_y = pos_ft + dy_full * 0.47
-        fig.add_shape(type="line", x0=x_nm, x1=tip_x, y0=pos_ft, y1=tip_y,
-            line=dict(color=color, width=1.5))
-        pos_ft -= barb_spacing
-        remaining -= 10
-
-    # Demi-barbelure 5 kt
-    if remaining >= 2.5:
-        tip_x = x_nm + dx * 0.42
-        tip_y = pos_ft + dy_full * 0.23
-        fig.add_shape(type="line", x0=x_nm, x1=tip_x, y0=pos_ft, y1=tip_y,
-            line=dict(color=color, width=1.5))
 
 
 def build_vertical_profile(
@@ -1681,9 +1611,10 @@ with tabs[2]:
             tuple(p[0] for p in profile["terrain_route_pts"]),
             tuple(p[1] for p in profile["terrain_route_pts"]),
         )
-        mid_lats = tuple(round(leg.mid_lat, 6) for leg in legs)
-        mid_lons = tuple(round(leg.mid_lon, 6) for leg in legs)
-        profile_wx = fetch_profile_wx(mid_lats, mid_lons)
+        profile_wx = fetch_profile_wx(
+            tuple(round(leg.mid_lat, 6) for leg in legs),
+            tuple(round(leg.mid_lon, 6) for leg in legs),
+        )
         st.session_state["profile_key"]   = profile_key
         st.session_state["profile_cache"] = profile
         st.session_state["profile_elev"]  = elev_m
@@ -1780,74 +1711,68 @@ with tabs[2]:
             align="center",
         )
 
-    # ── Nuages et barbules ──────────────────────────────────────────────────
+    # ── Nuages et vent (si disponibles) ─────────────────────────────────────
     if profile_wx:
-        gen_hour   = generation_hour_utc()
-        hour_key   = gen_hour.strftime("%Y-%m-%dT%H:%M")
+        hour_key = generation_hour_utc().strftime("%Y-%m-%dT%H:%M")
 
-        # Altitudes de référence des 3 étages (ft)
-        CLOUD_BANDS = [
-            ("low",  "cloud_cover_low",  0,     6500,  "rgba(150,180,220,"),
-            ("mid",  "cloud_cover_mid",  6500,  20000, "rgba(100,140,200,"),
-            ("high", "cloud_cover_high", 20000, 40000, "rgba(180,200,230,"),
+        # Étages nuageux : (variable, alt_bas_ft, alt_haut_ft, couleur RGBA)
+        CLOUD_LAYERS = [
+            ("cloud_cover_low",  0,     6500,  "rgba(180,200,230,"),
+            ("cloud_cover_mid",  6500,  20000, "rgba(140,170,215,"),
+            ("cloud_cover_high", 20000, 40000, "rgba(210,220,240,"),
         ]
-        # Niveaux de pression pour les barbules (hPa, label)
-        BARB_LEVELS_HPA = [(850, "850"), (700, "700"), (500, "500")]
-        MAST_FT     = 800   # hauteur visuelle du mât en ft sur l'axe Y
-        BARB_GAP_FT = 500   # espacement entre les 3 étages de barbules
+        # Niveaux vent : (hPa, label court)
+        WIND_LEVELS = [(850, "850"), (700, "700"), (500, "500")]
 
-        # Calcul des x de début/fin de chaque branche sur l'axe profil
+        # Bornes X de chaque branche sur l'axe profil
         cumul = 0.0
         leg_x_ranges = []
         for leg in legs:
-            x_start = round(cumul, 1)
-            x_end   = round(cumul + leg.distance_nm, 1)
-            x_mid   = round((x_start + x_end) / 2.0, 1)
-            leg_x_ranges.append((x_start, x_end, x_mid))
-            cumul   = round(cumul + leg.distance_nm, 1)
+            xs = round(cumul, 1)
+            xe = round(cumul + leg.distance_nm, 1)
+            leg_x_ranges.append((xs, xe, round((xs + xe) / 2.0, 1)))
+            cumul = xe
 
         for leg_i, leg in enumerate(legs):
             if leg_i >= len(profile_wx):
                 break
-            item   = profile_wx[leg_i]
-            hourly = item.get("hourly", {})
+            hourly = profile_wx[leg_i].get("hourly", {})
             h_idx  = get_hour_index(hourly.get("time", []), hour_key)
             if h_idx is None:
                 continue
 
-            x_start, x_end, x_mid = leg_x_ranges[leg_i]
-
-            # Base des barbules = altitude croisière de la branche + 500 ft
-            barb_base_ft = leg.altitude_ft + 500
+            xs, xe, xm = leg_x_ranges[leg_i]
 
             # ── Bandes nuageuses ──
-            for _name, var, alt_bot, alt_top, rgba_prefix in CLOUD_BANDS:
+            for var, alt_bot, alt_top, rgba in CLOUD_LAYERS:
                 arr = hourly.get(var, [])
                 if h_idx >= len(arr) or arr[h_idx] is None:
                     continue
                 cover = float(arr[h_idx])
                 if cover < 5:
                     continue
-                opacity = round(0.08 + cover / 100.0 * 0.45, 3)
+                opacity = round(0.07 + cover / 100.0 * 0.42, 3)
                 fig.add_hrect(
                     y0=alt_bot, y1=alt_top,
-                    x0=x_start, x1=x_end,
-                    fillcolor=f"{rgba_prefix}{opacity})",
+                    x0=xs, x1=xe,
+                    fillcolor=f"{rgba}{opacity})",
                     layer="below",
                     line_width=0,
                 )
                 fig.add_annotation(
-                    x=x_mid,
+                    x=xm,
                     y=alt_bot + (alt_top - alt_bot) * 0.5,
                     text=f"{int(round(cover))}%",
                     showarrow=False,
-                    font=dict(size=9, color="rgba(50,80,130,0.85)"),
-                    bgcolor="rgba(255,255,255,0)",
+                    font=dict(size=9, color="rgba(40,70,120,0.8)"),
                 )
 
-            # ── Barbules de vent ──
-            # Les 3 niveaux sont empilés au-dessus de la trajectoire de croisière
-            for b_i, (hpa, hpa_label) in enumerate(BARB_LEVELS_HPA):
+            # ── Flèches de vent ──
+            # Empilées au-dessus de l'altitude de croisière, une par niveau
+            arrow_base_ft = leg.altitude_ft + 600
+            arrow_step_ft = 1400  # espacement vertical entre niveaux
+
+            for w_i, (hpa, label) in enumerate(WIND_LEVELS):
                 spd_arr = hourly.get(f"wind_speed_{hpa}hPa", [])
                 dir_arr = hourly.get(f"wind_direction_{hpa}hPa", [])
                 if h_idx >= len(spd_arr) or h_idx >= len(dir_arr):
@@ -1856,20 +1781,48 @@ with tabs[2]:
                 wdir = dir_arr[h_idx]
                 if spd is None or wdir is None:
                     continue
-                anchor_ft = barb_base_ft + b_i * (MAST_FT + BARB_GAP_FT)
-                _draw_wind_barb(fig, x_mid, anchor_ft, float(spd), float(wdir))
+                spd  = float(spd)
+                wdir = float(wdir)
+
+                # Centre vertical de cette flèche
+                cy = arrow_base_ft + w_i * arrow_step_ft
+
+                # Longueur flèche proportionnelle à la vitesse (min 0.5 NM, max 2 NM)
+                arrow_len_nm = max(0.5, min(2.0, spd / 20.0))
+
+                # La flèche montre la direction vers laquelle va le vent
+                # (convention météo : dir = "vient de", donc +180°)
+                toward_deg = (wdir + 180.0) % 360.0
+                rad = math.radians(toward_deg)
+
+                # Projection sur axes X (NM) et Y (ft) — on normalise pour lisibilité
+                # On utilise uniquement la composante X (axe route) pour la direction
+                dx = math.sin(rad) * arrow_len_nm
+                # On garde Y fixe pour ne pas sortir du graphique
+                x0 = round(xm - dx / 2, 3)
+                x1 = round(xm + dx / 2, 3)
+
                 fig.add_annotation(
-                    x=x_mid,
-                    y=anchor_ft + MAST_FT + 200,
-                    text=f"{hpa_label} · {route3(float(wdir))}/{float(spd):.0f}kt",
+                    x=x1, y=cy,
+                    ax=x0, ay=cy,
+                    xref="x", yref="y",
+                    axref="x", ayref="y",
+                    showarrow=True,
+                    arrowhead=2,
+                    arrowsize=1.2,
+                    arrowwidth=2,
+                    arrowcolor="#1a3a5c",
+                )
+                fig.add_annotation(
+                    x=xm, y=cy + 350,
+                    text=f"{label} · {route3(wdir)}/{spd:.0f}kt",
                     showarrow=False,
-                    font=dict(size=8, color="rgba(30,58,95,0.85)"),
-                    bgcolor="rgba(255,255,255,0)",
+                    font=dict(size=8, color="rgba(26,58,92,0.9)"),
                 )
     # ────────────────────────────────────────────────────────────────────────
 
     fig.update_layout(
-        height=480,
+        height=500,
         margin=dict(l=20, r=20, t=20, b=20),
         xaxis_title="Distance cumulée (NM)",
         yaxis_title="Altitude (ft)",
