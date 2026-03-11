@@ -791,31 +791,54 @@ def fetch_profile_wx(
 ) -> Optional[List[dict]]:
     """
     Pour chaque point milieu de branche, récupère via ICON-D2 :
-    - cloud_cover (total colonne, pour annotation sur trajectoire)
-    - cloud_cover_low / mid (étages visuels)
-    - vent à 850 et 700 hPa (flèches sur la coupe)
-    - vent à tous les niveaux de pression DWD (interpolation à l'altitude de croisière)
-    Retourne une liste de dicts Open-Meteo, un par point milieu.
+    - Variables de surface  : cloud_cover, cloud_cover_low, cloud_cover_mid
+    - Variables de pression : wind + geopotential_height à tous niveaux DWD
+    Deux appels séparés car Open-Meteo ne mélange pas surface et pressure-level.
+    Retourne une liste de dicts fusionnés, un par point milieu.
     """
     if not mid_lats:
         return None
-    # Niveaux de pression DWD pour interpolation à l'altitude de croisière
+
+    # ── Appel 1 : variables de surface ──
+    surface_vars = ("cloud_cover", "cloud_cover_low", "cloud_cover_mid")
+    surface_items = None
+    try:
+        surface_items = fetch_openmeteo_hour_block("ICON-D2", mid_lats, mid_lons, surface_vars)
+    except Exception:
+        pass
+
+    # ── Appel 2 : variables de niveau de pression ──
     pressure_levels = [1000, 975, 950, 925, 900, 850, 800, 700, 600, 500, 400, 300, 250, 200]
-    pres_vars = []
-    for p in pressure_levels:
-        pres_vars += [
+    pres_vars = tuple(
+        var
+        for p in pressure_levels
+        for var in (
             f"wind_speed_{p}hPa",
             f"wind_direction_{p}hPa",
             f"geopotential_height_{p}hPa",
-        ]
-    wx_vars = tuple([
-        "cloud_cover",
-        "cloud_cover_low", "cloud_cover_mid",
-    ] + pres_vars)
+        )
+    )
+    pres_items = None
     try:
-        return fetch_openmeteo_hour_block("ICON-D2", mid_lats, mid_lons, wx_vars)
+        pres_items = fetch_openmeteo_hour_block("ICON-D2", mid_lats, mid_lons, pres_vars)
     except Exception:
+        pass
+
+    if surface_items is None and pres_items is None:
         return None
+
+    # ── Fusion : on merge les hourly des deux réponses dans un seul dict par point ──
+    n = max(
+        len(surface_items) if surface_items else 0,
+        len(pres_items)    if pres_items    else 0,
+    )
+    merged = []
+    for i in range(n):
+        s_hourly = surface_items[i].get("hourly", {}) if surface_items and i < len(surface_items) else {}
+        p_hourly = pres_items[i].get("hourly", {})    if pres_items    and i < len(pres_items)    else {}
+        combined = {**s_hourly, **p_hourly}
+        merged.append({"hourly": combined})
+    return merged
 
 
 def build_vertical_profile(
