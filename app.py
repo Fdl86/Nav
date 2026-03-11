@@ -1747,23 +1747,28 @@ with tabs[2]:
     if profile_wx:
         hour_key = generation_hour_utc().strftime("%Y-%m-%dT%H:%M")
 
-        # Conversion couverture % → code METAR
         def cover_to_metar(pct: float) -> str:
-            if pct < 12.5: return "SKC"
-            if pct < 37.5: return "FEW"
-            if pct < 62.5: return "SCT"
-            if pct < 87.5: return "BKN"
+            if pct < 12.5:
+                return "SKC"
+            if pct < 37.5:
+                return "FEW"
+            if pct < 62.5:
+                return "SCT"
+            if pct < 87.5:
+                return "BKN"
             return "OVC"
 
-        # Étages nuageux visuels (bandes de fond) — couleurs visibles sur fond sombre
-        CLOUD_LAYERS = [
-            ("cloud_cover_low",  0,    6500,  "rgba(200,220,255,"),   # blanc-bleu clair
-            ("cloud_cover_mid",  6500, 10000, "rgba(180,200,245,"),   # limité à FL100
-        ]
-        # Flèches aux niveaux standard VFR (≤ FL135)
-        WIND_LEVELS = [(850, "FL050"), (700, "FL100")]
+        def cover_to_alpha(pct: float) -> float:
+            if pct < 12.5:
+                return 0.0
+            if pct < 37.5:
+                return 0.14
+            if pct < 62.5:
+                return 0.22
+            if pct < 87.5:
+                return 0.34
+            return 0.48
 
-        # Bornes X de chaque branche sur l'axe profil
         cumul = 0.0
         leg_x_ranges = []
         for leg in legs:
@@ -1775,114 +1780,80 @@ with tabs[2]:
         for leg_i, leg in enumerate(legs):
             if leg_i >= len(profile_wx):
                 break
-            item   = profile_wx[leg_i]
+
+            item = profile_wx[leg_i]
             hourly = item.get("hourly", {})
-            h_idx  = get_hour_index(hourly.get("time", []), hour_key)
+            h_idx = get_hour_index(hourly.get("time", []), hour_key)
             if h_idx is None:
                 continue
 
             xs, xe, xm = leg_x_ranges[leg_i]
+            cruise_y = float(leg.altitude_ft)
 
-            # ── Bandes nuageuses de fond ──
-            for var, alt_bot, alt_top, rgba in CLOUD_LAYERS:
-                arr = hourly.get(var, [])
-                if h_idx >= len(arr) or arr[h_idx] is None:
-                    continue
-                cover = float(arr[h_idx])
-                if cover < 5:
-                    continue
-                opacity = round(0.12 + cover / 100.0 * 0.50, 3)
-                fig.add_hrect(
-                    y0=alt_bot, y1=alt_top,
-                    x0=xs, x1=xe,
-                    fillcolor=f"{rgba}{opacity})",
-                    layer="below",
-                    line_width=0.5,
-                    line_color="rgba(180,210,255,0.4)",
-                )
-                fig.add_annotation(
-                    x=xm,
-                    y=alt_bot + (alt_top - alt_bot) * 0.5,
-                    text=f"{int(round(cover))}%",
-                    showarrow=False,
-                    font=dict(size=9, color="rgba(30,60,110,0.75)"),
-                )
-
-            # ── Annotation sur la trajectoire : vent interpolé + nébulosité ──
-            cruise_wind = interpolate_pressure_wind_for_item(
-                item, h_idx, leg.altitude_ft, DWD_LEVELS_M
-            )
+            # Zone nuageuse relative à l'avion : +1000 à +2000 ft
             cc_arr = hourly.get("cloud_cover", [])
             cc_val = float(cc_arr[h_idx]) if h_idx < len(cc_arr) and cc_arr[h_idx] is not None else None
+            if cc_val is not None:
+                alpha = cover_to_alpha(cc_val)
+                if alpha > 0:
+                    cloud_y0 = cruise_y + 1000.0
+                    cloud_y1 = cruise_y + 2000.0
+                    fig.add_hrect(
+                        x0=xs,
+                        x1=xe,
+                        y0=cloud_y0,
+                        y1=cloud_y1,
+                        fillcolor=f"rgba(160,170,185,{alpha})",
+                        line_width=0,
+                        layer="below",
+                    )
+                    fig.add_annotation(
+                        x=xm,
+                        y=(cloud_y0 + cloud_y1) / 2.0,
+                        text=cover_to_metar(cc_val),
+                        showarrow=False,
+                        font=dict(size=10, color="rgba(60,70,90,0.95)", family="monospace"),
+                    )
 
-            if cruise_wind or cc_val is not None:
-                parts = []
-                if cruise_wind:
-                    parts.append(f"{route3(cruise_wind[0])}/{cruise_wind[1]:.0f}kt")
-                if cc_val is not None:
-                    parts.append(cover_to_metar(cc_val))
-                # Y de l'annotation = altitude de croisière de la branche
-                cruise_y = leg.altitude_ft
+            # Vent à l'altitude de l'avion, affiché au voisinage immédiat de la trajectoire
+            cruise_wind = interpolate_pressure_wind_for_item(
+                item,
+                h_idx,
+                leg.altitude_ft,
+                DWD_LEVELS_M,
+            )
+            if cruise_wind:
+                wind_dir, wind_spd = float(cruise_wind[0]), float(cruise_wind[1])
+                wind_y = cruise_y + 140.0
+
                 fig.add_annotation(
                     x=xm,
-                    y=cruise_y,
-                    text=" · ".join(parts),
+                    y=wind_y,
+                    text=f"Vent {route3(wind_dir)}/{wind_spd:.0f}kt",
                     showarrow=False,
-                    yshift=14,
                     font=dict(size=9, color="#b91c1c", family="monospace"),
-                    bgcolor="rgba(255,255,255,0.75)",
+                    bgcolor="rgba(255,255,255,0.78)",
                     bordercolor="#b91c1c",
                     borderwidth=1,
                     borderpad=3,
                 )
 
-            # ── Flèches de vent aux niveaux standard ──
-            arrow_base_ft = leg.altitude_ft + 900
-            arrow_step_ft = 1600
-
-            for w_i, (hpa, label) in enumerate(WIND_LEVELS):
-                spd_arr = hourly.get(f"wind_speed_{hpa}hPa", [])
-                dir_arr = hourly.get(f"wind_direction_{hpa}hPa", [])
-                if h_idx >= len(spd_arr) or h_idx >= len(dir_arr):
-                    continue
-                spd  = spd_arr[h_idx]
-                wdir = dir_arr[h_idx]
-                if spd is None or wdir is None:
-                    continue
-                spd  = float(spd)
-                wdir = float(wdir)
-
-                cy = arrow_base_ft + w_i * arrow_step_ft
-                arrow_len_nm = max(0.6, min(2.5, spd / 15.0))
-                toward_deg = (wdir + 180.0) % 360.0
-                dx = math.sin(math.radians(toward_deg)) * arrow_len_nm
-                x0 = round(xm - dx / 2, 3)
-                x1 = round(xm + dx / 2, 3)
-
-                fig.add_annotation(
-                    x=x1, y=cy,
-                    ax=x0, ay=cy,
-                    xref="x", yref="y",
-                    axref="x", ayref="y",
-                    showarrow=True,
-                    arrowhead=3,
-                    arrowsize=1.4,
-                    arrowwidth=2.5,
-                    arrowcolor="#e63946",
-                )
-                fig.add_annotation(
-                    x=xm, y=cy + 400,
-                    text=f"{label} · {route3(wdir)}/{spd:.0f}kt",
-                    showarrow=False,
-                    font=dict(size=8, color="#c1121f", family="monospace"),
-                )
-    # ────────────────────────────────────────────────────────────────────────
-    # ────────────────────────────────────────────────────────────────────────
-
-    # Axe Y : on plafonne à FL100 (10000 ft) ou légèrement au-dessus de la trajectoire
-    FL100_FT = 10000
+    # Axe Y : trajectoire + 2000 ft, avec marge pour VT/TDP et relief
     y_air_valid = [y for y in y_air if y is not None]
-    y_max = min(FL100_FT, max(y_air_valid) * 1.35 + 1500) if y_air_valid else FL100_FT
+    vt_tdp_tops = [y1 for _, _, y1, _ in profile["vt_marks"]] + [y1 for _, _, y1, _ in profile["tdp_marks"]]
+    terrain_max = max(terrain_ft) if terrain_ft else 0
+
+    if y_air_valid:
+        y_max = max(
+            max(y_air_valid) + 2200,
+            terrain_max + 1200,
+            max(vt_tdp_tops) + 600 if vt_tdp_tops else 0,
+        )
+    else:
+        y_max = max(
+            terrain_max + 1200,
+            max(vt_tdp_tops) + 600 if vt_tdp_tops else 4000,
+        )
 
     fig.update_layout(
         height=500,
