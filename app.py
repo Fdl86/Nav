@@ -791,17 +791,27 @@ def fetch_profile_wx(
 ) -> Optional[List[dict]]:
     """
     Pour chaque point milieu de branche, récupère via ICON-D2 :
-    - cloud_cover_low / mid / high (%)
-    - wind_speed + wind_direction à 850, 700, 500 hPa
+    - cloud_cover (total colonne, pour annotation sur trajectoire)
+    - cloud_cover_low / mid (étages visuels)
+    - vent à 850 et 700 hPa (flèches sur la coupe)
+    - vent à tous les niveaux de pression DWD (interpolation à l'altitude de croisière)
     Retourne une liste de dicts Open-Meteo, un par point milieu.
     """
     if not mid_lats:
         return None
-    wx_vars = (
+    # Niveaux de pression DWD pour interpolation à l'altitude de croisière
+    pressure_levels = [1000, 975, 950, 925, 900, 850, 800, 700, 600, 500, 400, 300, 250, 200]
+    pres_vars = []
+    for p in pressure_levels:
+        pres_vars += [
+            f"wind_speed_{p}hPa",
+            f"wind_direction_{p}hPa",
+            f"geopotential_height_{p}hPa",
+        ]
+    wx_vars = tuple([
+        "cloud_cover",
         "cloud_cover_low", "cloud_cover_mid",
-        "wind_speed_850hPa", "wind_direction_850hPa",
-        "wind_speed_700hPa", "wind_direction_700hPa",
-    )
+    ] + pres_vars)
     try:
         return fetch_openmeteo_hour_block("ICON-D2", mid_lats, mid_lons, wx_vars)
     except Exception:
@@ -1714,14 +1724,21 @@ with tabs[2]:
     if profile_wx:
         hour_key = generation_hour_utc().strftime("%Y-%m-%dT%H:%M")
 
-        # Étages nuageux pertinents en VFR : bas et moyen uniquement
+        # Conversion couverture % → code METAR
+        def cover_to_metar(pct: float) -> str:
+            if pct < 12.5: return "SKC"
+            if pct < 37.5: return "FEW"
+            if pct < 62.5: return "SCT"
+            if pct < 87.5: return "BKN"
+            return "OVC"
+
+        # Étages nuageux visuels (bandes de fond)
         CLOUD_LAYERS = [
-            ("cloud_cover_low",  0,    6500,  "rgba(180,200,230,"),
-            ("cloud_cover_mid",  6500, 14000, "rgba(140,170,215,"),
+            ("cloud_cover_low",  0,    6500,  "rgba(160,190,230,"),
+            ("cloud_cover_mid",  6500, 14000, "rgba(120,155,210,"),
         ]
-        # Niveaux vent : limités au FL135 (~13500 ft) — VFR uniquement
-        # 850 hPa ≈ 5000 ft, 700 hPa ≈ 10000 ft
-        WIND_LEVELS = [(850, "850"), (700, "700")]
+        # Flèches aux niveaux standard VFR (≤ FL135)
+        WIND_LEVELS = [(850, "FL050"), (700, "FL100")]
 
         # Bornes X de chaque branche sur l'axe profil
         cumul = 0.0
@@ -1735,14 +1752,15 @@ with tabs[2]:
         for leg_i, leg in enumerate(legs):
             if leg_i >= len(profile_wx):
                 break
-            hourly = profile_wx[leg_i].get("hourly", {})
+            item   = profile_wx[leg_i]
+            hourly = item.get("hourly", {})
             h_idx  = get_hour_index(hourly.get("time", []), hour_key)
             if h_idx is None:
                 continue
 
             xs, xe, xm = leg_x_ranges[leg_i]
 
-            # ── Bandes nuageuses ──
+            # ── Bandes nuageuses de fond ──
             for var, alt_bot, alt_top, rgba in CLOUD_LAYERS:
                 arr = hourly.get(var, [])
                 if h_idx >= len(arr) or arr[h_idx] is None:
@@ -1750,7 +1768,7 @@ with tabs[2]:
                 cover = float(arr[h_idx])
                 if cover < 5:
                     continue
-                opacity = round(0.07 + cover / 100.0 * 0.42, 3)
+                opacity = round(0.06 + cover / 100.0 * 0.38, 3)
                 fig.add_hrect(
                     y0=alt_bot, y1=alt_top,
                     x0=xs, x1=xe,
@@ -1763,13 +1781,40 @@ with tabs[2]:
                     y=alt_bot + (alt_top - alt_bot) * 0.5,
                     text=f"{int(round(cover))}%",
                     showarrow=False,
-                    font=dict(size=9, color="rgba(40,70,120,0.8)"),
+                    font=dict(size=9, color="rgba(30,60,110,0.75)"),
                 )
 
-            # ── Flèches de vent ──
-            # Empilées au-dessus de l'altitude de croisière, une par niveau
-            arrow_base_ft = leg.altitude_ft + 600
-            arrow_step_ft = 1400  # espacement vertical entre niveaux
+            # ── Annotation sur la trajectoire : vent interpolé + nébulosité ──
+            cruise_wind = interpolate_pressure_wind_for_item(
+                item, h_idx, leg.altitude_ft, DWD_LEVELS_M
+            )
+            cc_arr = hourly.get("cloud_cover", [])
+            cc_val = float(cc_arr[h_idx]) if h_idx < len(cc_arr) and cc_arr[h_idx] is not None else None
+
+            if cruise_wind or cc_val is not None:
+                parts = []
+                if cruise_wind:
+                    parts.append(f"{route3(cruise_wind[0])}/{cruise_wind[1]:.0f}kt")
+                if cc_val is not None:
+                    parts.append(cover_to_metar(cc_val))
+                # Y de l'annotation = altitude de croisière de la branche
+                cruise_y = leg.altitude_ft
+                fig.add_annotation(
+                    x=xm,
+                    y=cruise_y,
+                    text=" · ".join(parts),
+                    showarrow=False,
+                    yshift=14,
+                    font=dict(size=9, color="#b91c1c", family="monospace"),
+                    bgcolor="rgba(255,255,255,0.75)",
+                    bordercolor="#b91c1c",
+                    borderwidth=1,
+                    borderpad=3,
+                )
+
+            # ── Flèches de vent aux niveaux standard ──
+            arrow_base_ft = leg.altitude_ft + 900
+            arrow_step_ft = 1600
 
             for w_i, (hpa, label) in enumerate(WIND_LEVELS):
                 spd_arr = hourly.get(f"wind_speed_{hpa}hPa", [])
@@ -1783,21 +1828,10 @@ with tabs[2]:
                 spd  = float(spd)
                 wdir = float(wdir)
 
-                # Centre vertical de cette flèche
                 cy = arrow_base_ft + w_i * arrow_step_ft
-
-                # Longueur flèche proportionnelle à la vitesse (min 0.5 NM, max 2 NM)
-                arrow_len_nm = max(0.5, min(2.0, spd / 20.0))
-
-                # La flèche montre la direction vers laquelle va le vent
-                # (convention météo : dir = "vient de", donc +180°)
+                arrow_len_nm = max(0.6, min(2.5, spd / 15.0))
                 toward_deg = (wdir + 180.0) % 360.0
-                rad = math.radians(toward_deg)
-
-                # Projection sur axes X (NM) et Y (ft) — on normalise pour lisibilité
-                # On utilise uniquement la composante X (axe route) pour la direction
-                dx = math.sin(rad) * arrow_len_nm
-                # On garde Y fixe pour ne pas sortir du graphique
+                dx = math.sin(math.radians(toward_deg)) * arrow_len_nm
                 x0 = round(xm - dx / 2, 3)
                 x1 = round(xm + dx / 2, 3)
 
@@ -1807,17 +1841,18 @@ with tabs[2]:
                     xref="x", yref="y",
                     axref="x", ayref="y",
                     showarrow=True,
-                    arrowhead=2,
-                    arrowsize=1.2,
-                    arrowwidth=2,
-                    arrowcolor="#1a3a5c",
+                    arrowhead=3,
+                    arrowsize=1.4,
+                    arrowwidth=2.5,
+                    arrowcolor="#e63946",
                 )
                 fig.add_annotation(
-                    x=xm, y=cy + 350,
+                    x=xm, y=cy + 400,
                     text=f"{label} · {route3(wdir)}/{spd:.0f}kt",
                     showarrow=False,
-                    font=dict(size=8, color="rgba(26,58,92,0.9)"),
+                    font=dict(size=8, color="#c1121f", family="monospace"),
                 )
+    # ────────────────────────────────────────────────────────────────────────
     # ────────────────────────────────────────────────────────────────────────
 
     fig.update_layout(
