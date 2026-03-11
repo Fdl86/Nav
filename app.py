@@ -1257,6 +1257,20 @@ def default_legs():
         }
     ]
 
+def legs_signature(legs_data):
+    return tuple(
+        (
+            l["leg_type"],
+            round(float(l["route_true_deg"]), 2),
+            round(float(l["distance_nm"]), 2),
+            round(float(l["altitude_ft"]), 0),
+            l["end_type"],
+            (l["target_icao"] or "").strip().upper(),
+            (l["label"] or "").strip(),
+        )
+        for l in legs_data
+    )
+
 def ensure_state():
     if "legs_data" not in st.session_state:
         st.session_state.legs_data = default_legs()
@@ -1456,16 +1470,39 @@ for raw in st.session_state.legs_data:
         )
     )
 
-try:
-    legs, nav_points = build_route(
-        departure,
-        legs_in,
-        tas_kt,
-        departure_metar_decoded=metar_decoded,
+metar_sig = None
+if metar_decoded:
+    metar_sig = (
+        metar_decoded.get("wind_dir"),
+        metar_decoded.get("wind_speed_kt"),
+        metar_decoded.get("obs_time"),
     )
-except ValueError as e:
-    st.error(str(e))
-    st.stop()
+
+route_key = (
+    dep_icao,
+    round(float(tas_kt), 1),
+    metar_sig,
+    legs_signature(st.session_state.legs_data),
+)
+
+if st.session_state.get("route_key") == route_key:
+    legs = st.session_state["route_legs"]
+    nav_points = st.session_state["route_nav_points"]
+else:
+    try:
+        legs, nav_points = build_route(
+            departure,
+            legs_in,
+            tas_kt,
+            departure_metar_decoded=metar_decoded,
+        )
+    except ValueError as e:
+        st.error(str(e))
+        st.stop()
+
+    st.session_state["route_key"] = route_key
+    st.session_state["route_legs"] = legs
+    st.session_state["route_nav_points"] = nav_points
 
 selected_leg_idx = st.selectbox(
     "Branche sélectionnée",
