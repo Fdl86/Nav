@@ -798,10 +798,9 @@ def fetch_profile_wx(
     if not mid_lats:
         return None
     wx_vars = (
-        "cloud_cover_low", "cloud_cover_mid", "cloud_cover_high",
+        "cloud_cover_low", "cloud_cover_mid",
         "wind_speed_850hPa", "wind_direction_850hPa",
         "wind_speed_700hPa", "wind_direction_700hPa",
-        "wind_speed_500hPa", "wind_direction_500hPa",
     )
     try:
         return fetch_openmeteo_hour_block("ICON-D2", mid_lats, mid_lons, wx_vars)
@@ -1715,14 +1714,14 @@ with tabs[2]:
     if profile_wx:
         hour_key = generation_hour_utc().strftime("%Y-%m-%dT%H:%M")
 
-        # Étages nuageux : (variable, alt_bas_ft, alt_haut_ft, couleur RGBA)
+        # Étages nuageux pertinents en VFR : bas et moyen uniquement
         CLOUD_LAYERS = [
-            ("cloud_cover_low",  0,     6500,  "rgba(180,200,230,"),
-            ("cloud_cover_mid",  6500,  20000, "rgba(140,170,215,"),
-            ("cloud_cover_high", 20000, 40000, "rgba(210,220,240,"),
+            ("cloud_cover_low",  0,    6500,  "rgba(180,200,230,"),
+            ("cloud_cover_mid",  6500, 14000, "rgba(140,170,215,"),
         ]
-        # Niveaux vent : (hPa, label court)
-        WIND_LEVELS = [(850, "850"), (700, "700"), (500, "500")]
+        # Niveaux vent : limités au FL135 (~13500 ft) — VFR uniquement
+        # 850 hPa ≈ 5000 ft, 700 hPa ≈ 10000 ft
+        WIND_LEVELS = [(850, "850"), (700, "700")]
 
         # Bornes X de chaque branche sur l'axe profil
         cumul = 0.0
