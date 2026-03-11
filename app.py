@@ -784,30 +784,6 @@ def fetch_elevations(lats: Tuple[float, ...], lons: Tuple[float, ...]):
     except Exception:
         return None
 
-@st.cache_data(ttl=60 * 60, show_spinner=False)
-def fetch_profile_wx(
-    mid_lats: Tuple[float, ...],
-    mid_lons: Tuple[float, ...],
-) -> Optional[List[dict]]:
-    """
-    1 seul appel ICON-D2 surface par point milieu de branche :
-    - cloud_cover        : couverture totale (%)
-    - temperature_2m     : température au sol (°C)
-    - dewpoint_2m        : point de rosée au sol (°C)
-    Hauteur de base nuages estimée via formule Dew Point Depression :
-        cloud_base_ft ≈ (T - Td) × 400
-    Valide pour cumulus ; fallback étage fixe si hors plage [200, 10000] ft.
-    Le vent croisière vient de leg.wind_dir_deg / leg.wind_speed_kt (build_route).
-    """
-    if not mid_lats:
-        return None
-    surface_vars = ("cloud_cover", "temperature_2m", "dewpoint_2m")
-    try:
-        return fetch_openmeteo_hour_block("ICON-D2", mid_lats, mid_lons, surface_vars)
-    except Exception:
-        return None
-
-
 def build_vertical_profile(
     nav_points: List[NavPoint],
     legs: List[LegResult],
@@ -1593,9 +1569,8 @@ with tabs[2]:
         verticale_ft, tdp_ft,
     )
     if st.session_state.get("profile_key") == profile_key:
-        profile    = st.session_state["profile_cache"]
-        elev_m     = st.session_state["profile_elev"]
-        profile_wx = st.session_state["profile_wx"]
+        profile = st.session_state["profile_cache"]
+        elev_m  = st.session_state["profile_elev"]
     else:
         profile = build_vertical_profile(
             nav_points=nav_points,
@@ -1610,14 +1585,9 @@ with tabs[2]:
             tuple(p[0] for p in profile["terrain_route_pts"]),
             tuple(p[1] for p in profile["terrain_route_pts"]),
         )
-        profile_wx = fetch_profile_wx(
-            tuple(round(leg.mid_lat, 6) for leg in legs),
-            tuple(round(leg.mid_lon, 6) for leg in legs),
-        )
         st.session_state["profile_key"]   = profile_key
         st.session_state["profile_cache"] = profile
         st.session_state["profile_elev"]  = elev_m
-        st.session_state["profile_wx"]    = profile_wx
         
     if elev_m is None:
         terrain_ft = [0] * len(profile["terrain_route_pts"])
@@ -1710,134 +1680,11 @@ with tabs[2]:
             align="center",
         )
 
-    # ── Nuages et vent ──────────────────────────────────────────────────────
-    def cover_to_metar(pct: float) -> str:
-        if pct < 12.5: return "SKC"
-        if pct < 37.5: return "FEW"
-        if pct < 62.5: return "SCT"
-        if pct < 87.5: return "BKN"
-        return "OVC"
-
-    def cover_to_alpha(pct: float) -> float:
-        if pct < 12.5: return 0.0
-        if pct < 37.5: return 0.14
-        if pct < 62.5: return 0.22
-        if pct < 87.5: return 0.34
-        return 0.48
-
-    # Bornes X par branche
-    cumul = 0.0
-    leg_x_ranges = []
-    for leg in legs:
-        xs = round(cumul, 1)
-        xe = round(cumul + leg.distance_nm, 1)
-        leg_x_ranges.append((xs, xe, round((xs + xe) / 2.0, 1)))
-        cumul = xe
-
-    # ── Nuages (si profile_wx disponible) ──
-    if profile_wx:
-        hour_key = generation_hour_utc().strftime("%Y-%m-%dT%H:%M")
-        for leg_i, leg in enumerate(legs):
-            if leg_i >= len(profile_wx):
-                break
-            hourly = profile_wx[leg_i].get("hourly", {})
-            h_idx = get_hour_index(hourly.get("time", []), hour_key)
-            if h_idx is None:
-                continue
-
-            xs, xe, xm = leg_x_ranges[leg_i]
-
-            # Couverture nuageuse
-            cc_arr = hourly.get("cloud_cover", [])
-            cc_val = float(cc_arr[h_idx]) if h_idx < len(cc_arr) and cc_arr[h_idx] is not None else None
-            if cc_val is None or cc_val < 12.5:
-                continue
-
-            # Hauteur de base via Dew Point Depression : (T - Td) × 400 ft
-            t_arr  = hourly.get("temperature_2m", [])
-            td_arr = hourly.get("dewpoint_2m", [])
-            t_val  = t_arr[h_idx]  if h_idx < len(t_arr)  and t_arr[h_idx]  is not None else None
-            td_val = td_arr[h_idx] if h_idx < len(td_arr) and td_arr[h_idx] is not None else None
-
-            if t_val is not None and td_val is not None:
-                cloud_base_ft = max(200.0, (float(t_val) - float(td_val)) * 400.0)
-                if cloud_base_ft > 10000.0:
-                    cloud_base_ft = None  # hors plage → fallback
-            else:
-                cloud_base_ft = None
-
-            # Fallback étage fixe si formule hors plage ou données manquantes
-            if cloud_base_ft is None:
-                cloud_base_ft = 3000.0  # étage bas par défaut
-
-            cloud_top_ft = cloud_base_ft + 1500.0
-            alpha = cover_to_alpha(cc_val)
-
-            # Bande nuageuse à la vraie hauteur estimée
-            fig.add_hrect(
-                x0=xs, x1=xe,
-                y0=cloud_base_ft, y1=cloud_top_ft,
-                fillcolor=f"rgba(160,170,185,{alpha})",
-                line_width=0.8,
-                line_color="rgba(200,210,230,0.5)",
-                layer="below",
-            )
-            # Label centré dans la bande
-            fig.add_annotation(
-                x=xm,
-                y=(cloud_base_ft + cloud_top_ft) / 2.0,
-                text=f"{cover_to_metar(cc_val)} {int(round(cc_val))}%  ~{int(round(cloud_base_ft/100)*100)} ft",
-                showarrow=False,
-                font=dict(size=9, color="rgba(220,230,255,0.95)", family="monospace"),
-                bgcolor="rgba(30,40,60,0.55)",
-                borderpad=2,
-            )
-            # Ligne pointillée à la base des nuages
-            fig.add_shape(
-                type="line",
-                x0=xs, x1=xe,
-                y0=cloud_base_ft, y1=cloud_base_ft,
-                line=dict(color="rgba(200,210,230,0.7)", width=1, dash="dot"),
-            )
-
-    # ── Vent à l'altitude de croisière (toujours disponible via leg) ──
-    for leg_i, leg in enumerate(legs):
-        xs, xe, xm = leg_x_ranges[leg_i]
-        fig.add_annotation(
-            x=xm,
-            y=float(leg.altitude_ft) + 140.0,
-            text=f"Vent {route3(leg.wind_dir_deg)}/{leg.wind_speed_kt:.0f}kt",
-            showarrow=False,
-            font=dict(size=9, color="#b91c1c", family="monospace"),
-            bgcolor="rgba(255,255,255,0.78)",
-            bordercolor="#b91c1c",
-            borderwidth=1,
-            borderpad=3,
-        )
-
-    # Axe Y : trajectoire + 2000 ft, avec marge pour VT/TDP et relief
-    y_air_valid = [y for y in y_air if y is not None]
-    vt_tdp_tops = [y1 for _, _, y1, _ in profile["vt_marks"]] + [y1 for _, _, y1, _ in profile["tdp_marks"]]
-    terrain_max = max(terrain_ft) if terrain_ft else 0
-
-    if y_air_valid:
-        y_max = max(
-            max(y_air_valid) + 2200,
-            terrain_max + 1200,
-            max(vt_tdp_tops) + 600 if vt_tdp_tops else 0,
-        )
-    else:
-        y_max = max(
-            terrain_max + 1200,
-            max(vt_tdp_tops) + 600 if vt_tdp_tops else 4000,
-        )
-
     fig.update_layout(
-        height=500,
+        height=430,
         margin=dict(l=20, r=20, t=20, b=20),
         xaxis_title="Distance cumulée (NM)",
         yaxis_title="Altitude (ft)",
-        yaxis=dict(range=[0, y_max]),
         legend_orientation="h",
     )
 
