@@ -314,7 +314,7 @@ def format_minutes_mmss(minutes_value: float) -> str:
     return f"{mm:02d}:{ss:02d}"
 
 def format_duration(minutes_value: float) -> str:
-    """MM:SS si < 60 min, HH:MM au-delà."""
+    """MM:SS si < 60 min, HHhMM au-delà."""
     if minutes_value < 60.0:
         total_seconds = max(0, int(round(minutes_value * 60)))
         mm = total_seconds // 60
@@ -324,7 +324,7 @@ def format_duration(minutes_value: float) -> str:
         total_minutes = max(0, int(round(minutes_value)))
         hh = total_minutes // 60
         mm = total_minutes % 60
-        return f"{hh:02d}:{mm:02d}"
+        return f"{hh:02d}h{mm:02d}"
 
 def correction_label(wca_deg: float) -> str:
     if abs(wca_deg) < 0.05:
@@ -1635,7 +1635,7 @@ with tabs[1]:
     with c1:
         metric_card("Distance totale", f"{total_nm:.1f} NM")
     with c2:
-        metric_card("Temps de route", format_minutes_mmss(trip_minutes))
+        metric_card("Temps de route", format_duration(trip_minutes))
     with c3:
         metric_card("TOTAL embarqué", f"{total_fuel_l:.1f} L")
     with c4:
