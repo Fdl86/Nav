@@ -1612,13 +1612,14 @@ with tabs[1]:
 
     st.markdown("### Log de navigation")
     fuel_remaining_l = usable_fuel_l
-    # Heure courante en minutes depuis minuit UTC pour calcul arrêt moteur
     elapsed_min = 0.0
     for leg in legs:
         fuel_leg = leg.ete_min / 60.0 * fuel_burn_lph
         fuel_remaining_l -= fuel_leg
         elapsed_min += leg.ete_min
-        engine_stop_min = dep_time_min + elapsed_min  # minutes UTC depuis minuit
+        # Heure d'arrêt moteur = heure départ + temps écoulé jusqu'ici + autonomie restante
+        autonomy_min = (fuel_remaining_l / fuel_burn_lph * 60.0) if fuel_burn_lph > 0 else 0.0
+        engine_stop_min = dep_time_min + elapsed_min + autonomy_min
         leg_card(leg, selected=(leg.idx == selected_leg_idx),
                  fuel_leg=fuel_leg, fuel_remaining_l=fuel_remaining_l,
                  engine_stop_min=engine_stop_min)
