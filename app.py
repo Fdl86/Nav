@@ -1196,7 +1196,7 @@ def leg_card(
     selected: bool = False,
     fuel_leg: Optional[float] = None,
     fuel_remaining_l: Optional[float] = None,
-    engine_remaining_min: Optional[float] = None,
+    engine_stop_min: Optional[float] = None,
 ):
     border = "#ef4444" if selected else "rgba(128,128,128,0.22)"
     bg = "rgba(239,68,68,0.05)" if selected else "rgba(255,255,255,0.03)"
@@ -1206,11 +1206,15 @@ def leg_card(
     dm_txt = f"{abs(leg.declination_deg):.1f}°{'E' if leg.declination_deg >= 0 else 'W'}"
 
     fuel_line = ""
-    if fuel_leg is not None and fuel_remaining_l is not None and engine_remaining_min is not None:
+    if fuel_leg is not None and fuel_remaining_l is not None and engine_stop_min is not None:
+        _stop_total = int(round(engine_stop_min)) % (24 * 60)
+        _stop_hh = _stop_total // 60
+        _stop_mm = _stop_total % 60
+        _stop_str = f"{_stop_hh:02d}:{_stop_mm:02d}Z"
         fuel_line = (
             f"<br>Fuel {fuel_leg:.1f} L • "
             f"Reste {fuel_remaining_l:.1f} L • "
-            f"Moteur {format_minutes_mmss(engine_remaining_min)}"
+            f"Arrêt moteur {_stop_str}"
         )
 
     st.markdown(
@@ -1309,18 +1313,32 @@ st.caption("Départ OACI, METAR/TAF, branches simples, carte openAIP, cap magné
 openaip_key = st.secrets.get("OPENAIP_KEY", "")
 
 with st.expander("Vol", expanded=True):
-    c1, c2, c3 = st.columns(3)
-
-    with c1:
+    # Ligne 1 : OACI, heure départ, TAS
+    _now_utc = datetime.now(timezone.utc)
+    _default_time = _now_utc.strftime("%H:%M")
+    r1c1, r1c2, r1c3 = st.columns(3)
+    with r1c1:
         dep_icao = st.text_input("Départ OACI", value="LFBI").strip().upper()
-
-    with c2:
+    with r1c2:
+        dep_time_str = st.text_input("Heure départ UTC (HH:MM)", value=_default_time, max_chars=5)
+    with r1c3:
         tas_kt = st.number_input("TAS (kt)", min_value=40, max_value=220, value=100, step=1)
 
-    with c3:
+    # Ligne 2 : taux de montée / descente
+    r2c1, r2c2, r2c3 = st.columns(3)
+    with r2c1:
         climb_rate_fpm = st.number_input("Taux montée (ft/min)", min_value=100, max_value=3000, value=840, step=10)
+    with r2c2:
         climb_speed_kt = st.number_input("Vitesse montée (kt)", min_value=40, max_value=200, value=65, step=1)
+    with r2c3:
         descent_rate_fpm = st.number_input("Taux descente (ft/min)", min_value=100, max_value=3000, value=500, step=50)
+
+    # Parse heure départ
+    try:
+        _h, _m = dep_time_str.strip().split(":")
+        dep_time_min = int(_h) * 60 + int(_m)
+    except Exception:
+        dep_time_min = _now_utc.hour * 60 + _now_utc.minute
 
 with st.expander("Carburant", expanded=True):
     c1, c2, c3 = st.columns(3)
@@ -1582,49 +1600,28 @@ with tabs[1]:
     usable_fuel_l = usable_total_min / 60.0 * fuel_burn_lph
     total_fuel_l  = usable_fuel_l + unusable_fuel_l
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     with c1:
         metric_card("Distance totale", f"{total_nm:.1f} NM")
     with c2:
         metric_card("Temps de route", format_minutes_mmss(trip_minutes))
     with c3:
         metric_card("TOTAL embarqué", f"{total_fuel_l:.1f} L")
-
-    st.markdown("### Devis carburant")
-    st.markdown(f"""
-Trajet + vent : **{format_minutes_mmss(trip_minutes)}**
-
-Roulage départ : **{format_minutes_mmss(taxi_departure_min)}**
-
-Déroutement : **{format_minutes_mmss(diversion_min)}**
-
-Arrivée déroutement : **{format_minutes_mmss(diversion_arrival_min)}**
-
-Marge CDB : **{format_minutes_mmss(cdb_margin_min)}**
-
-Réserve finale : **{format_minutes_mmss(final_reserve_min)}**
-
----
-
-Temps moteur total : **{format_minutes_mmss(usable_total_min)}**
-
-Carburant utilisable : **{usable_fuel_l:.1f} L**
-
-Carburant non utilisable : **{unusable_fuel_l:.1f} L**
-
-### TOTAL embarqué
-# **{total_fuel_l:.1f} L**
-""")
+    with c4:
+        metric_card("Carburant utilisable", f"{usable_fuel_l:.1f} L")
 
     st.markdown("### Log de navigation")
     fuel_remaining_l = usable_fuel_l
+    # Heure courante en minutes depuis minuit UTC pour calcul arrêt moteur
+    elapsed_min = 0.0
     for leg in legs:
         fuel_leg = leg.ete_min / 60.0 * fuel_burn_lph
         fuel_remaining_l -= fuel_leg
-        engine_remaining_min = fuel_remaining_l / fuel_burn_lph * 60.0 if fuel_burn_lph > 0 else 0.0
+        elapsed_min += leg.ete_min
+        engine_stop_min = dep_time_min + elapsed_min  # minutes UTC depuis minuit
         leg_card(leg, selected=(leg.idx == selected_leg_idx),
                  fuel_leg=fuel_leg, fuel_remaining_l=fuel_remaining_l,
-                 engine_remaining_min=engine_remaining_min)
+                 engine_stop_min=engine_stop_min)
 
 with tabs[2]:
     verticale_ft = 1500
