@@ -1352,9 +1352,9 @@ with st.expander("Carburant", expanded=True):
         diversion_arrival_min = st.number_input("Arrivée déroutement (min)", min_value=0, max_value=60, value=12, step=1)
 
     with c3:
-        cdb_margin_min = st.number_input("Marge CDB (min)", min_value=0, max_value=120, value=0, step=1)
+        cdb_margin_min = st.number_input("Marge CDB (min)", min_value=0, max_value=240, value=0, step=1)
         final_reserve_min = st.number_input("Réserve finale (min)", min_value=0, max_value=120, value=30, step=1)
-        unusable_fuel_l = st.number_input("Carburant non utilisable (L)", min_value=0.0, max_value=50.0, value=0.0, step=0.5)
+        unusable_fuel_l = st.number_input("Carburant non utilisable (L)", min_value=0.0, max_value=50.0, value=2.0, step=0.5)
 
 departure = resolve_airport(dep_icao)
 if not departure:
