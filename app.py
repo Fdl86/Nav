@@ -1356,16 +1356,6 @@ with st.expander("Carburant", expanded=True):
         final_reserve_min = st.number_input("Réserve finale (min)", min_value=0, max_value=120, value=30, step=1)
         unusable_fuel_l = st.number_input("Carburant non utilisable (L)", min_value=0.0, max_value=50.0, value=0.0, step=0.5)
 
-    st.divider()
-    qty_fuel_l = st.number_input(
-        "Quantité embarquée (L)",
-        min_value=0.0,
-        max_value=500.0,
-        value=0.0,
-        step=0.5,
-        help="Carburant réellement mis en soute. Comparé au TOTAL requis ci-dessous.",
-    )
-
 departure = resolve_airport(dep_icao)
 if not departure:
     st.error("Aérodrome de départ introuvable.")
@@ -1610,27 +1600,15 @@ with tabs[1]:
     usable_fuel_l = usable_total_min / 60.0 * fuel_burn_lph
     total_fuel_l  = usable_fuel_l + unusable_fuel_l
 
-    @st.fragment
-    def fuel_summary_cards(total_nm, trip_minutes, total_fuel_l, usable_fuel_l, qty_fuel_l):
-        c1, c2, c3, c4 = st.columns(4)
-        with c1:
-            metric_card("Distance totale", f"{total_nm:.1f} NM")
-        with c2:
-            metric_card("Temps de route", format_minutes_mmss(trip_minutes))
-        with c3:
-            metric_card("TOTAL requis", f"{total_fuel_l:.1f} L")
-        with c4:
-            metric_card("Carburant utilisable", f"{usable_fuel_l:.1f} L")
-
-        if qty_fuel_l > 0:
-            marge = qty_fuel_l - total_fuel_l
-            if marge < 0:
-                st.error(f"⚠️ Insuffisant : quantité embarquée {qty_fuel_l:.1f} L < requis {total_fuel_l:.1f} L ({marge:.1f} L)")
-            else:
-                extra_min = (marge / fuel_burn_lph) * 60.0
-                st.success(f"✓ Marge : +{marge:.1f} L — soit +{format_minutes_mmss(extra_min)} d'autonomie supplémentaire")
-
-    fuel_summary_cards(total_nm, trip_minutes, total_fuel_l, usable_fuel_l, qty_fuel_l)
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        metric_card("Distance totale", f"{total_nm:.1f} NM")
+    with c2:
+        metric_card("Temps de route", format_minutes_mmss(trip_minutes))
+    with c3:
+        metric_card("TOTAL embarqué", f"{total_fuel_l:.1f} L")
+    with c4:
+        metric_card("Carburant utilisable", f"{usable_fuel_l:.1f} L")
 
     st.markdown("### Log de navigation")
     fuel_remaining_l = usable_fuel_l
