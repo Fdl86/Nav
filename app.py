@@ -1191,15 +1191,27 @@ def metric_card(label: str, value: str):
         unsafe_allow_html=True,
     )
 
-def leg_card(leg: LegResult,selected: bool = False,fuel_burn_lph: float = 20.0,fuel_remaining_l: float = 0.0,):
+def leg_card(
+    leg: LegResult,
+    selected: bool = False,
+    fuel_leg: Optional[float] = None,
+    fuel_remaining_l: Optional[float] = None,
+    engine_remaining_min: Optional[float] = None,
+):
     border = "#ef4444" if selected else "rgba(128,128,128,0.22)"
     bg = "rgba(239,68,68,0.05)" if selected else "rgba(255,255,255,0.03)"
 
     cv_true = leg.heading_true_deg
     cm_mag = leg.heading_mag_deg
     dm_txt = f"{abs(leg.declination_deg):.1f}°{'E' if leg.declination_deg >= 0 else 'W'}"
-    fuel_leg = leg.ete_min / 60 * fuel_burn_lph
-    engine_remaining_min = fuel_remaining_l / fuel_burn_lph * 60 if fuel_burn_lph > 0 else 0
+
+    fuel_line = ""
+    if fuel_leg is not None and fuel_remaining_l is not None and engine_remaining_min is not None:
+        fuel_line = (
+            f"<br>Fuel {fuel_leg:.1f} L • "
+            f"Reste {fuel_remaining_l:.1f} L • "
+            f"Moteur {format_minutes_mmss(engine_remaining_min)}"
+        )
 
     st.markdown(
         f"""
@@ -1224,12 +1236,7 @@ def leg_card(leg: LegResult,selected: bool = False,fuel_burn_lph: float = 20.0,f
                 GS {leg.gs_kt:.0f} kt •
                 ETE {format_minutes_mmss(leg.ete_min)}<br>
                 Vent {route3(leg.wind_dir_deg)}/{leg.wind_speed_kt:.0f} kt ({leg.wind_source}) •
-                Fin {leg.end_type.replace("_", " ")}
-                <br>
-                Fuel {fuel_leg:.1f} L •
-                Reste {fuel_remaining_l:.1f} L •
-                Moteur {format_minutes_mmss(engine_remaining_min)}
-
+                Fin {leg.end_type.replace("_", " ")}{fuel_line}
             </div>
         </div>
         """,
@@ -1319,63 +1326,17 @@ with st.expander("Carburant", expanded=True):
     c1, c2, c3 = st.columns(3)
 
     with c1:
-        fuel_burn_lph = st.number_input(
-            "Consommation (L/h)",
-            min_value=1,
-            max_value=100,
-            value=20,
-            step=1,
-        )
-
-        taxi_departure_min = st.number_input(
-            "Roulage départ (min)",
-            min_value=0,
-            max_value=60,
-            value=8,
-            step=1,
-        )
+        fuel_burn_lph = st.number_input("Consommation (L/h)", min_value=1, max_value=100, value=20, step=1)
+        taxi_departure_min = st.number_input("Roulage départ (min)", min_value=0, max_value=60, value=8, step=1)
 
     with c2:
-        diversion_min = st.number_input(
-            "Déroutement (min)",
-            min_value=0,
-            max_value=120,
-            value=15,
-            step=1,
-        )
-
-        diversion_arrival_min = st.number_input(
-            "Arrivée déroutement (min)",
-            min_value=0,
-            max_value=60,
-            value=12,
-            step=1,
-        )
+        diversion_min = st.number_input("Déroutement (min)", min_value=0, max_value=120, value=15, step=1)
+        diversion_arrival_min = st.number_input("Arrivée déroutement (min)", min_value=0, max_value=60, value=12, step=1)
 
     with c3:
-        cdb_margin_min = st.number_input(
-            "Marge CDB (min)",
-            min_value=0,
-            max_value=120,
-            value=0,
-            step=1,
-        )
-
-        final_reserve_min = st.number_input(
-            "Réserve finale (min)",
-            min_value=0,
-            max_value=120,
-            value=30,
-            step=1,
-        )
-
-        unusable_fuel_l = st.number_input(
-            "Carburant non utilisable (L)",
-            min_value=0.0,
-            max_value=50.0,
-            value=0.0,
-            step=0.5,
-        )
+        cdb_margin_min = st.number_input("Marge CDB (min)", min_value=0, max_value=120, value=0, step=1)
+        final_reserve_min = st.number_input("Réserve finale (min)", min_value=0, max_value=120, value=30, step=1)
+        unusable_fuel_l = st.number_input("Carburant non utilisable (L)", min_value=0.0, max_value=50.0, value=0.0, step=0.5)
 
 departure = resolve_airport(dep_icao)
 if not departure:
@@ -1557,19 +1518,6 @@ else:
     st.session_state["route_legs"] = legs
     st.session_state["route_nav_points"] = nav_points
 
-trip_minutes = sum(l.ete_min for l in legs)
-trip_fuel_l = trip_minutes / 60 * fuel_burn_lph
-usable_total_min = (
-    trip_minutes
-    + taxi_departure_min
-    + diversion_min
-    + diversion_arrival_min
-    + cdb_margin_min
-    + final_reserve_min
-)
-usable_fuel_l = usable_total_min / 60 * fuel_burn_lph
-total_fuel_l = usable_fuel_l + unusable_fuel_l
-
 selected_leg_idx = st.selectbox(
     "Branche sélectionnée",
     options=[leg.idx for leg in legs],
@@ -1621,53 +1569,62 @@ with tabs[0]:
 
 with tabs[1]:
     total_nm = sum(l.distance_nm for l in legs)
-    total_min = sum(l.ete_min for l in legs)
+    trip_minutes = sum(l.ete_min for l in legs)
 
-    c1, c2, c3, c4 = st.columns(4)
+    usable_total_min = (
+        trip_minutes
+        + taxi_departure_min
+        + diversion_min
+        + diversion_arrival_min
+        + cdb_margin_min
+        + final_reserve_min
+    )
+    usable_fuel_l = usable_total_min / 60.0 * fuel_burn_lph
+    total_fuel_l  = usable_fuel_l + unusable_fuel_l
+
+    c1, c2, c3 = st.columns(3)
     with c1:
         metric_card("Distance totale", f"{total_nm:.1f} NM")
     with c2:
-        metric_card("Temps total", f"{total_min:.1f} min")
+        metric_card("Temps de route", format_minutes_mmss(trip_minutes))
     with c3:
-        metric_card("Trip fuel", f"{trip_fuel_l:.1f} L")
-    with c4:
-        metric_card("Fuel + réserve", f"{total_fuel_l:.1f} L")
+        metric_card("TOTAL embarqué", f"{total_fuel_l:.1f} L")
 
     st.markdown("### Devis carburant")
     st.markdown(f"""
-    Trajet + vent : **{format_minutes_mmss(trip_minutes)}**
+Trajet + vent : **{format_minutes_mmss(trip_minutes)}**
 
-    Roulage départ : **{format_minutes_mmss(taxi_departure_min)}**
+Roulage départ : **{format_minutes_mmss(taxi_departure_min)}**
 
-    Déroutement : **{format_minutes_mmss(diversion_min)}**
+Déroutement : **{format_minutes_mmss(diversion_min)}**
 
-    Arrivée déroutement : **{format_minutes_mmss(diversion_arrival_min)}**
+Arrivée déroutement : **{format_minutes_mmss(diversion_arrival_min)}**
 
-    Marge CDB : **{format_minutes_mmss(cdb_margin_min)}**
+Marge CDB : **{format_minutes_mmss(cdb_margin_min)}**
 
-    Réserve finale : **{format_minutes_mmss(final_reserve_min)}**
+Réserve finale : **{format_minutes_mmss(final_reserve_min)}**
 
-    ---
+---
 
-    Temps moteur total : **{format_minutes_mmss(usable_total_min)}**
+Temps moteur total : **{format_minutes_mmss(usable_total_min)}**
 
-    Carburant utilisable : **{usable_fuel_l:.1f} L**
+Carburant utilisable : **{usable_fuel_l:.1f} L**
 
-    Carburant non utilisable : **{unusable_fuel_l:.1f} L**
+Carburant non utilisable : **{unusable_fuel_l:.1f} L**
 
-    ### TOTAL embarqué
-    # **{total_fuel_l:.1f} L**
-    """)   
+### TOTAL embarqué
+# **{total_fuel_l:.1f} L**
+""")
+
     st.markdown("### Log de navigation")
+    fuel_remaining_l = usable_fuel_l
     for leg in legs:
-        fuel_leg = leg.ete_min / 60 * fuel_burn_lph
+        fuel_leg = leg.ete_min / 60.0 * fuel_burn_lph
         fuel_remaining_l -= fuel_leg
-        leg_card(
-            leg,
-            selected=(leg.idx == selected_leg_idx),
-            fuel_burn_lph=fuel_burn_lph,
-            fuel_remaining_l=fuel_remaining_l,
-        )
+        engine_remaining_min = fuel_remaining_l / fuel_burn_lph * 60.0 if fuel_burn_lph > 0 else 0.0
+        leg_card(leg, selected=(leg.idx == selected_leg_idx),
+                 fuel_leg=fuel_leg, fuel_remaining_l=fuel_remaining_l,
+                 engine_remaining_min=engine_remaining_min)
 
 with tabs[2]:
     verticale_ft = 1500
