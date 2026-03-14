@@ -1353,7 +1353,7 @@ with st.expander("Vol", expanded=True):
     except Exception:
         dep_time_min = _now_utc.hour * 60 + _now_utc.minute
 
-with st.expander("Devis carburant", expanded=True):
+with st.expander("Carburant", expanded=True):
     c1, c2, c3 = st.columns(3)
 
     with c1:
@@ -1378,37 +1378,13 @@ with st.expander("Devis carburant", expanded=True):
     emport_min_l = _emport_min_total_min / 60.0 * fuel_burn_lph + unusable_fuel_l
 
     @st.fragment
-    def emport_carburant(emport_min_l, emport_min_total_min, emport_total_ref_l):
+    def emport_carburant(emport_min_l, emport_min_total_min):
         st.info(
             f"**Emport minimum** (hors trajet) : **{emport_min_l:.1f} L** "
             f"— {format_duration(emport_min_total_min)} moteur [{unusable_fuel_l:.1f} L non utilisable déduits]"
         )
-        st.divider()
-        boarded_l = st.number_input(
-            "Carburant embarqué (L)",
-            min_value=0.0,
-            max_value=500.0,
-            value=0.0,
-            step=0.5,
-            key="boarded_fuel_l",
-        )
-        if boarded_l > 0:
-            marge = boarded_l - emport_total_ref_l
-            if marge < 0:
-                st.error(
-                    f"⚠️ Insuffisant : {boarded_l:.1f} L embarqués < {emport_total_ref_l:.1f} L requis "
-                    f"({marge:.1f} L)"
-                )
-            else:
-                extra_min = (marge / fuel_burn_lph) * 60.0 if fuel_burn_lph > 0 else 0.0
-                st.success(
-                    f"✓ Marge : +{marge:.1f} L — +{format_duration(extra_min)} d'autonomie supplémentaire"
-                )
 
-    # emport_total_l est calculé dans tabs[1] après build_route
-    # On le récupère depuis session_state s'il existe
-    _emport_total_ref = st.session_state.get("emport_total_l", emport_min_l)
-    emport_carburant(emport_min_l, _emport_min_total_min, _emport_total_ref)
+    emport_carburant(emport_min_l, _emport_min_total_min)
 
 departure = resolve_airport(dep_icao)
 if not departure:
@@ -1655,7 +1631,6 @@ with tabs[1]:
 
     emport_nav_l  = trip_minutes / 60.0 * fuel_burn_lph   # carburant branches seules
     emport_total_l = emport_nav_l + emport_min_l           # + forfaits/réserves
-    st.session_state["emport_total_l"] = emport_total_l    # disponible pour le fragment devis
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -1667,17 +1642,14 @@ with tabs[1]:
     with c4:
         metric_card("Emport total", f"{emport_total_l:.1f} L")
 
-    # Carburant de référence pour le log : embarqué si saisi, sinon emport total calculé
-    boarded_l = st.session_state.get("boarded_fuel_l", 0.0)
-    ref_fuel_l = boarded_l if boarded_l > 0 else emport_total_l
-
     st.markdown("### Log de navigation")
-    fuel_remaining_l = ref_fuel_l
+    fuel_remaining_l = usable_fuel_l
     elapsed_min = 0.0
     for leg in legs:
         fuel_leg = leg.ete_min / 60.0 * fuel_burn_lph
         fuel_remaining_l -= fuel_leg
         elapsed_min += leg.ete_min
+        # Heure d'arrêt moteur = heure départ + temps écoulé jusqu'ici + autonomie restante
         autonomy_min = (fuel_remaining_l / fuel_burn_lph * 60.0) if fuel_burn_lph > 0 else 0.0
         engine_stop_min = dep_time_min + elapsed_min + autonomy_min
         leg_card(leg, selected=(leg.idx == selected_leg_idx),
