@@ -1352,30 +1352,27 @@ with st.expander("Carburant", expanded=True):
         diversion_arrival_min = st.number_input("Arrivée déroutement (min)", min_value=0, max_value=60, value=12, step=1)
 
     with c3:
-        cdb_margin_min = st.number_input("Marge CDB (min)", min_value=0, max_value=120, value=0, step=1)
-        final_reserve_min = st.number_input("Réserve finale (min)", min_value=0, max_value=120, value=30, step=1)
         unusable_fuel_l = st.number_input("Carburant non utilisable (L)", min_value=0.0, max_value=50.0, value=2.0, step=0.5)
+        final_reserve_min = st.number_input("Réserve finale (min)", min_value=0, max_value=120, value=30, step=1)
 
     @st.fragment
     def emport_carburant(fuel_burn_lph, taxi_departure_min, diversion_min,
-                         diversion_arrival_min, cdb_margin_min, final_reserve_min,
+                         diversion_arrival_min, final_reserve_min,
                          unusable_fuel_l):
-        # Tous les postes en minutes → litres
         total_min = (
             taxi_departure_min
             + diversion_min
             + diversion_arrival_min
-            + cdb_margin_min
             + final_reserve_min
         )
         emport_l = total_min / 60.0 * fuel_burn_lph + unusable_fuel_l
         st.info(
             f"**Emport minimum** (hors trajet) : **{emport_l:.1f} L** "
-            f"— {format_minutes_mmss(total_min)} moteur + {unusable_fuel_l:.1f} L non utilisable"
+            f"— {format_minutes_mmss(total_min)} moteur [{unusable_fuel_l:.1f} L non utilisable déduits]"
         )
 
     emport_carburant(fuel_burn_lph, taxi_departure_min, diversion_min,
-                     diversion_arrival_min, cdb_margin_min, final_reserve_min,
+                     diversion_arrival_min, final_reserve_min,
                      unusable_fuel_l)
 
 departure = resolve_airport(dep_icao)
@@ -1616,7 +1613,6 @@ with tabs[1]:
         + taxi_departure_min
         + diversion_min
         + diversion_arrival_min
-        + cdb_margin_min
         + final_reserve_min
     )
     usable_fuel_l = usable_total_min / 60.0 * fuel_burn_lph
