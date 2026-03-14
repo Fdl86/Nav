@@ -1558,6 +1558,7 @@ else:
     st.session_state["route_nav_points"] = nav_points
 
 trip_minutes = sum(l.ete_min for l in legs)
+trip_fuel_l = trip_minutes / 60 * fuel_burn_lph
 usable_total_min = (
     trip_minutes
     + taxi_departure_min
