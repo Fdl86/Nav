@@ -1368,25 +1368,23 @@ with st.expander("Carburant", expanded=True):
         unusable_fuel_l = st.number_input("Carburant non utilisable (L)", min_value=0.0, max_value=50.0, value=2.0, step=0.5)
         final_reserve_min = st.number_input("Réserve finale (min)", min_value=0, max_value=120, value=30, step=1)
 
+    # Calcul emport minimum exposé hors fragment pour usage dans tabs[1]
+    _emport_min_total_min = (
+        taxi_departure_min
+        + diversion_min
+        + diversion_arrival_min
+        + final_reserve_min
+    )
+    emport_min_l = _emport_min_total_min / 60.0 * fuel_burn_lph + unusable_fuel_l
+
     @st.fragment
-    def emport_carburant(fuel_burn_lph, taxi_departure_min, diversion_min,
-                         diversion_arrival_min, final_reserve_min,
-                         unusable_fuel_l):
-        total_min = (
-            taxi_departure_min
-            + diversion_min
-            + diversion_arrival_min
-            + final_reserve_min
-        )
-        emport_l = total_min / 60.0 * fuel_burn_lph + unusable_fuel_l
+    def emport_carburant(emport_min_l, emport_min_total_min):
         st.info(
-            f"**Emport minimum** (hors trajet) : **{emport_l:.1f} L** "
-            f"— {format_duration(total_min)} moteur [{unusable_fuel_l:.1f} L non utilisable déduits]"
+            f"**Emport minimum** (hors trajet) : **{emport_min_l:.1f} L** "
+            f"— {format_duration(emport_min_total_min)} moteur [{unusable_fuel_l:.1f} L non utilisable déduits]"
         )
 
-    emport_carburant(fuel_burn_lph, taxi_departure_min, diversion_min,
-                     diversion_arrival_min, final_reserve_min,
-                     unusable_fuel_l)
+    emport_carburant(emport_min_l, _emport_min_total_min)
 
 departure = resolve_airport(dep_icao)
 if not departure:
@@ -1631,15 +1629,18 @@ with tabs[1]:
     usable_fuel_l = usable_total_min / 60.0 * fuel_burn_lph
     total_fuel_l  = usable_fuel_l + unusable_fuel_l
 
+    emport_nav_l  = trip_minutes / 60.0 * fuel_burn_lph   # carburant branches seules
+    emport_total_l = emport_nav_l + emport_min_l           # + forfaits/réserves
+
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         metric_card("Distance totale", f"{total_nm:.1f} NM")
     with c2:
         metric_card("Temps de route", format_duration(trip_minutes))
     with c3:
-        metric_card("TOTAL embarqué", f"{total_fuel_l:.1f} L")
+        metric_card("Emport navigation", f"{emport_nav_l:.1f} L")
     with c4:
-        metric_card("Carburant utilisable", f"{usable_fuel_l:.1f} L")
+        metric_card("Emport total", f"{emport_total_l:.1f} L")
 
     st.markdown("### Log de navigation")
     fuel_remaining_l = usable_fuel_l
