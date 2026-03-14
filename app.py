@@ -313,6 +313,19 @@ def format_minutes_mmss(minutes_value: float) -> str:
     ss = total_seconds % 60
     return f"{mm:02d}:{ss:02d}"
 
+def format_duration(minutes_value: float) -> str:
+    """MM:SS si < 60 min, HH:MM au-delà."""
+    if minutes_value < 60.0:
+        total_seconds = max(0, int(round(minutes_value * 60)))
+        mm = total_seconds // 60
+        ss = total_seconds % 60
+        return f"{mm:02d}:{ss:02d}"
+    else:
+        total_minutes = max(0, int(round(minutes_value)))
+        hh = total_minutes // 60
+        mm = total_minutes % 60
+        return f"{hh:02d}:{mm:02d}"
+
 def correction_label(wca_deg: float) -> str:
     if abs(wca_deg) < 0.05:
         return "nulle"
@@ -1368,7 +1381,7 @@ with st.expander("Carburant", expanded=True):
         emport_l = total_min / 60.0 * fuel_burn_lph + unusable_fuel_l
         st.info(
             f"**Emport minimum** (hors trajet) : **{emport_l:.1f} L** "
-            f"— {format_minutes_mmss(total_min)} moteur [{unusable_fuel_l:.1f} L non utilisable déduits]"
+            f"— {format_duration(total_min)} moteur [{unusable_fuel_l:.1f} L non utilisable déduits]"
         )
 
     emport_carburant(fuel_burn_lph, taxi_departure_min, diversion_min,
