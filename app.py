@@ -1358,7 +1358,7 @@ with st.expander("Carburant", expanded=True):
 
     with c1:
         fuel_burn_lph = st.number_input("Consommation (L/h)", min_value=1, max_value=100, value=20, step=1)
-        taxi_departure_min = st.number_input("Roulage départ (min)", min_value=0, max_value=60, value=8, step=1)
+        taxi_departure_min = st.number_input("Forfait roulage/arrivée (min)", min_value=0, max_value=60, value=20, step=1)
 
     with c2:
         diversion_min = st.number_input("Déroutement (min)", min_value=0, max_value=120, value=15, step=1)
