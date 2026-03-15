@@ -4,6 +4,7 @@ from typing import Optional, Dict
 import pandas as pd
 import streamlit as st
 
+from typing import Dict, Optional, Tuple
 from config import AIRPORTS_CSV_URL, AIRPORTS_FALLBACK_CSV_URL
 from models import Aerodrome
 
