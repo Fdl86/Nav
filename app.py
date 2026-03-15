@@ -394,14 +394,18 @@ with tabs[3]:
     
         with st.expander(label, expanded=(i == 0)):
             st.markdown("**METAR**")
+            
             if metar_txt:
-                st.code(metar_txt, language="text")
+                st.text(metar_txt)
             else:
                 st.warning("METAR indisponible.")
             
+            st.divider()
+            
             st.markdown("**TAF**")
+            
             if taf_txt:
-                st.code(taf_txt, language="text")
+                st.text(taf_txt)
             else:
                 st.warning("TAF indisponible.")
 
