@@ -471,10 +471,18 @@ def fetch_openmeteo_hour_block(
 def build_time_index(hourly_time: List[str]) -> Dict[str, int]:
     return {t: i for i, t in enumerate(hourly_time)}
 
+def get_hour_index(
+    hourly_time: List[str],
+    target_key: str,
+    time_index: Optional[Dict[str, int]] = None,
+) -> Optional[int]:
+    if time_index is not None:
+        return time_index.get(target_key)
 
-def get_hour_index(hourly_time: List[str], target_key: str) -> Optional[int]:
-    return build_time_index(hourly_time).get(target_key)
-
+    for i, t in enumerate(hourly_time):
+        if t == target_key:
+            return i
+    return None
 
 def build_hour_indices(items: List[dict]) -> List[Dict[str, int]]:
     return [build_time_index(item.get("hourly", {}).get("time", [])) for item in items]
@@ -567,8 +575,9 @@ def mean_branch_pressure_wind(
     pairs = []
     for idx in point_indices:
         item = items[idx]
-        hour_map = hour_indices[idx] if hour_indices else build_time_index(item.get("hourly", {}).get("time", []))
-        hour_idx = hour_map.get(hour_key)
+        hourly_time = item.get("hourly", {}).get("time", [])
+        hour_map = hour_indices[idx] if hour_indices else None
+        hour_idx = get_hour_index(hourly_time, hour_key, time_index=hour_map)
         pair = interpolate_pressure_wind_for_item(item, hour_idx, altitude_ft, level_map)
         if pair:
             pairs.append(pair)
