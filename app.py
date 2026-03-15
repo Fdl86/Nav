@@ -393,21 +393,17 @@ with tabs[3]:
             label += " · départ"
     
         with st.expander(label, expanded=(i == 0)):
-            c1, c2 = st.columns(2)
-
-            with c1:
-                st.markdown("**METAR**")
-                if metar_txt:
-                    st.code(metar_txt, language="text")
-                else:
-                    st.warning("METAR indisponible.")
-
-            with c2:
-                st.markdown("**TAF**")
-                if taf_txt:
-                    st.code(taf_txt, language="text")
-                else:
-                    st.warning("TAF indisponible.")
+            st.markdown("**METAR**")
+            if metar_txt:
+                st.code(metar_txt, language="text")
+            else:
+                st.warning("METAR indisponible.")
+            
+            st.markdown("**TAF**")
+            if taf_txt:
+                st.code(taf_txt, language="text")
+            else:
+                st.warning("TAF indisponible.")
 
     st.markdown("### Vent par branche")
     hour_txt = generation_hour_utc().strftime("%Y-%m-%d %H:%M UTC")
