@@ -95,12 +95,6 @@ metar_raw       = weather_bundle.metar_raw
 metar_decoded   = weather_bundle.metar_decoded
 taf_raw         = weather_bundle.taf_raw
 
-route_weather_sections = build_route_weather_sections(
-    departure=departure,
-    legs_in=legs_in,
-    departure_weather_bundle=weather_bundle,
-)
-
 if not GEOMAG_AVAILABLE:
     st.warning("`pygeomag` n'est pas installé : le cap magnétique sera temporairement égal au cap vrai.")
 
@@ -232,6 +226,12 @@ selected_leg_idx = st.selectbox(
     "Branche sélectionnée",
     options=[leg.idx for leg in legs],
     format_func=lambda i: f"Branche {i}: {legs[i - 1].start_name} → {legs[i - 1].end_name}",
+)
+
+route_weather_sections = build_route_weather_sections(
+    departure=departure,
+    legs_in=legs_in,
+    departure_weather_bundle=weather_bundle,
 )
 
 tabs = st.tabs(["Carte", "Navigation", "Profil vertical", "Météo"])
