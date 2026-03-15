@@ -17,6 +17,35 @@ from ui.map import build_map
 from ui.panels import metric_card, leg_card, legs_signature
 from ui.state import ensure_state, sync_basemap_choice
 
+def build_route_weather_sections(departure, legs_in, departure_weather_bundle):
+    sections = []
+    seen = set()
+
+    def add_airport(icao: str, bundle=None):
+        icao = (icao or "").strip().upper()
+        if not icao or icao in seen:
+            return
+        seen.add(icao)
+
+        airport = resolve_airport(icao)
+        name = airport.name if airport else icao
+        if bundle is None:
+            bundle = fetch_airport_weather_bundle(icao)
+
+        sections.append({
+            "icao": icao,
+            "name": name,
+            "bundle": bundle,
+        })
+
+    add_airport(departure.icao, departure_weather_bundle)
+
+    for leg in legs_in:
+        if leg.leg_type == "aerodrome":
+            add_airport(leg.target_icao)
+
+    return sections
+
 APP_TITLE = "Prépa VFR Mobile"
 logging.basicConfig(level=logging.WARNING)
 
@@ -65,6 +94,12 @@ weather_bundle  = fetch_airport_weather_bundle(dep_icao)
 metar_raw       = weather_bundle.metar_raw
 metar_decoded   = weather_bundle.metar_decoded
 taf_raw         = weather_bundle.taf_raw
+
+route_weather_sections = build_route_weather_sections(
+    departure=departure,
+    legs_in=legs_in,
+    departure_weather_bundle=weather_bundle,
+)
 
 if not GEOMAG_AVAILABLE:
     st.warning("`pygeomag` n'est pas installé : le cap magnétique sera temporairement égal au cap vrai.")
@@ -342,20 +377,37 @@ with tabs[2]:
 
 # ── Météo ─────────────────────────────────────────────────────────────────────
 with tabs[3]:
-    st.subheader(f"Départ {departure.icao}")
-    st.markdown(f"**{departure.name}**")
+    st.subheader("METAR / TAF terrains du trajet")
+    st.caption("Départ + tous les aérodromes présents sur le trajet.")
 
-    st.markdown("**METAR**")
-    if metar_raw:
-        st.code(metar_raw, language="text")
-    else:
-        st.warning("METAR indisponible.")
+    for i, section in enumerate(route_weather_sections):
+        icao = section["icao"]
+        name = section["name"]
+        bundle = section["bundle"]
+    
+        metar_txt = bundle.metar_raw
+        taf_txt = bundle.taf_raw
+    
+        label = f"{icao} — {name}"
+        if i == 0:
+            label += " · départ"
+    
+        with st.expander(label, expanded=(i == 0)):
+            c1, c2 = st.columns(2)
 
-    st.markdown("**TAF**")
-    if taf_raw:
-        st.code(taf_raw, language="text")
-    else:
-        st.warning("TAF indisponible.")
+            with c1:
+                st.markdown("**METAR**")
+                if metar_txt:
+                    st.code(metar_txt, language="text")
+                else:
+                    st.warning("METAR indisponible.")
+
+            with c2:
+                st.markdown("**TAF**")
+                if taf_txt:
+                    st.code(taf_txt, language="text")
+                else:
+                    st.warning("TAF indisponible.")
 
     st.markdown("### Vent par branche")
     hour_txt = generation_hour_utc().strftime("%Y-%m-%d %H:%M UTC")
